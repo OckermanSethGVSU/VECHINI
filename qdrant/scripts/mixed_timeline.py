@@ -129,7 +129,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip recall reconstruction and .npy inputs; only write throughput and the global timeline.",
     )
+    parser.add_argument(
+        "--throughput-only",
+        action="store_true",
+        help="Only write throughput outputs and the global timeline; equivalent to --skip-recall.",
+    )
     args = parser.parse_args()
+    if args.throughput_only:
+        args.skip_recall = True
     if not args.skip_recall:
         if not args.insert_vectors:
             parser.error("--insert-vectors is required unless --skip-recall is set")
