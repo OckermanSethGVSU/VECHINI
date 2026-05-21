@@ -70,7 +70,7 @@ type ShardRef struct {
 }
 
 var debugHTTPClient = &http.Client{
-	Timeout: 10 * time.Second,
+	Timeout: 9999 * time.Second,
 }
 
 // parseNpyMetadata reads only the .npy header so streaming mode can inspect
@@ -535,7 +535,7 @@ func waitForQuiescence(
 	pollInterval time.Duration,
 ) (time.Time, error) {
 	if pollInterval <= 0 {
-		pollInterval = 5 * time.Millisecond
+		pollInterval = 100 * time.Millisecond
 	}
 
 	debugEnabled := envEnabled("DEBUG")
@@ -543,19 +543,52 @@ func waitForQuiescence(
 	lastHNSW := !requireHNSW
 	lastHNSWDetail := "not required"
 	lastWaitLog := time.Time{}
+	currentObjects := last.TotalObjects
+	currentQueue := last.TotalQueue
+	currentIndexing := last.Indexing
+	currentHNSW := lastHNSW
+	currentHNSWDetail := lastHNSWDetail
 	var stableSince time.Time
+	logWaitErr := func(label string, err error) {
+		if err == nil {
+			return
+		}
+
+		log.Printf(
+			"Quiescence poll %s: %v (objects=%d queue=%d indexing=%d hnsw=%t details=%s)",
+			label,
+			err,
+			currentObjects,
+			currentQueue,
+			currentIndexing,
+			currentHNSW,
+			currentHNSWDetail,
+		)
+	}
 
 	for {
 		snap, err := getCollectionSnapshot(ctx, client, className)
 		if err == nil {
 			last = snap
+			currentObjects = snap.TotalObjects
+			currentQueue = snap.TotalQueue
+			currentIndexing = snap.Indexing
 			hnswReady := !requireHNSW
 			hnswDetail := "not required"
+			currentHNSW = hnswReady
+			currentHNSWDetail = hnswDetail
 			if requireHNSW {
 				hnswReady, hnswDetail, err = getUnderlyingIndexStatus(ctx, nodes, snap, className)
+				currentHNSW = hnswReady
+				currentHNSWDetail = hnswDetail
+				if err != nil {
+					logWaitErr("failed during HNSW readiness check", err)
+				}
 				if err == nil {
 					lastHNSW = hnswReady
 					lastHNSWDetail = hnswDetail
+					currentHNSW = lastHNSW
+					currentHNSWDetail = lastHNSWDetail
 				}
 			}
 			if debugEnabled {
@@ -602,8 +635,11 @@ func waitForQuiescence(
 				)
 				lastWaitLog = time.Now()
 			}
-		} else if debugEnabled {
-			log.Printf("Quiescence poll failed before HNSW check: err=%v", err)
+		} else {
+			logWaitErr("failed before HNSW check", err)
+			if debugEnabled {
+				log.Printf("Quiescence poll failed before HNSW check: err=%v", err)
+			}
 		}
 
 		select {
@@ -1110,7 +1146,7 @@ func clientWorker(
 	if opMode == "INDEX" {
 		opMode = "INSERT"
 	}
-	
+
 	nWorkersStr := os.Getenv("N_WORKERS")
 	nWorkers, err := strconv.Atoi(nWorkersStr)
 	if err != nil || nWorkers <= 0 {
@@ -1151,14 +1187,14 @@ func clientWorker(
 	}
 
 	switch balanceStrategy {
-		case "NONE", "NO_BALANCE":
-			node, err = getNodeByRank("./ip_registry.txt", 0)
-		case "WORKER", "WORKER_BALANCE":
-			node, err = getNodeByRank("./ip_registry.txt", workerRank)
-		default:
-			log.Fatalf("unknown %s=%q", balanceEnv, balanceStrategy)
+	case "NONE", "NO_BALANCE":
+		node, err = getNodeByRank("./ip_registry.txt", 0)
+	case "WORKER", "WORKER_BALANCE":
+		node, err = getNodeByRank("./ip_registry.txt", workerRank)
+	default:
+		log.Fatalf("unknown %s=%q", balanceEnv, balanceStrategy)
 	}
-	
+
 	client, err := weaviate.NewClient(weaviate.Config{
 		Host:   fmt.Sprintf("%s:%d", node.IP, node.HTTPPort),
 		Scheme: "http",
@@ -1193,14 +1229,14 @@ func clientWorker(
 			workerRank, clientID, globalClientRank, startIdx, endIdx, localRows, sweep.BatchSize, node.IP, node.HTTPPort, node.GRPCPort,
 		)
 
-			var (
-				totalDurations   []float64
-				convertDurations []float64
-				uploadDurations  []float64
-				queryResultIDs   []int64
-				queryResultWidth = -1
-				queryResultRows  int
-			)
+		var (
+			totalDurations   []float64
+			convertDurations []float64
+			uploadDurations  []float64
+			queryResultIDs   []int64
+			queryResultWidth = -1
+			queryResultRows  int
+		)
 
 		if localRows == 0 {
 			if mode == "INSERT" && globalClientRank == 0 {
@@ -1250,7 +1286,6 @@ func clientWorker(
 				batch = local[i:end]
 			}
 
-			
 			opCtx, opCancel := context.WithTimeout(ctx, rpcTimeout)
 			var startUpload time.Time
 
@@ -1330,9 +1365,9 @@ func clientWorker(
 			sharedTiming.MarkLoopDoneAt(time.Now())
 			if opMode == "INSERT" {
 				lastInsertCompleteAt := endLoop
-				waitCtx, waitCancel := context.WithTimeout(ctx, 30*time.Minute)
-				searchableAt, err := waitForQuiescence(waitCtx, client, allNodes, collectionName, mode == "INDEX", 5*time.Millisecond)
-				waitCancel()
+				// waitCtx, waitCancel := context.WithTimeout(ctx, *time.Minute)
+				searchableAt, err := waitForQuiescence(ctx, client, allNodes, collectionName, mode == "INDEX", 5*time.Millisecond)
+				// waitCancel()
 				if err != nil {
 					log.Printf("wait for searchable collection failed: %v", err)
 				} else {
@@ -1352,7 +1387,7 @@ func clientWorker(
 
 		if globalClientRank == 0 && opMode == "INSERT" {
 			statusCtx, statusCancel := context.WithTimeout(ctx, 10*time.Second)
-				logCollectionStatus(statusCtx, client, collectionName)
+			logCollectionStatus(statusCtx, client, collectionName)
 			statusCancel()
 		}
 
@@ -1496,7 +1531,7 @@ func main() {
 
 	dataPathEnv := fmt.Sprintf("%s_DATA_FILEPATH", workloadMode)
 	dataPath := os.Getenv(dataPathEnv)
-	
+
 	batchEnv := fmt.Sprintf("%s_BATCH_SIZE", workloadMode)
 	batchSizeStr := os.Getenv(batchEnv)
 	batchSizes, err := parseBatchSizes(batchSizeStr)
@@ -1508,7 +1543,6 @@ func main() {
 	}
 	batchSize := batchSizes[0]
 	resultPath := "."
-	
 
 	sweeps := []SweepConfig{{
 		BatchSize:  batchSize,
