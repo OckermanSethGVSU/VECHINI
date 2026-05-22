@@ -129,17 +129,7 @@ engine_iterate_matrix() {
 }
 
 engine_load_combo() {
-    local assignment
-    local key
-    local value
-
-    IFS=';' read -r -a assignments <<< "$1"
-    for assignment in "${assignments[@]}"; do
-        [[ -n "$assignment" ]] || continue
-        key="${assignment%%=*}"
-        value="${assignment#*=}"
-        printf -v "$key" '%s' "$value"
-    done
+    schema_load_combo_assignments "$1"
 
     NODES_CURRENT="$NODES"
     QUERY_BATCH_CURRENT="$QUERY_BATCH_SIZE"

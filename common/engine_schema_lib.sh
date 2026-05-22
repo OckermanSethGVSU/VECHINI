@@ -387,6 +387,28 @@ schema_emit_combos_recursive() {
     done
 }
 
+# Load one emitted combo into shell globals.
+#
+# Variables may already exist as arrays from earlier override processing. Unset
+# them before assignment so each combo value becomes a true scalar and stale
+# sweep entries do not leak into run_config.env.
+schema_load_combo_assignments() {
+    local combo_line="$1"
+    local assignment
+    local key
+    local value
+    local assignments=()
+
+    IFS=';' read -r -a assignments <<< "$combo_line"
+    for assignment in "${assignments[@]}"; do
+        [[ -n "$assignment" ]] || continue
+        key="${assignment%%=*}"
+        value="${assignment#*=}"
+        unset "$key"
+        printf -v "$key" '%s' "$value"
+    done
+}
+
 # Emit the current scalar globals as KEY=value lines for run_config.env.
 schema_emit_runtime_env() {
     local schema_prefix="$1"

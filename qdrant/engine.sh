@@ -115,17 +115,7 @@ engine_iterate_matrix() {
 
 # Load one matrix combo into scalar globals used by naming and env emission.
 engine_load_combo() {
-    local assignment
-    local key
-    local value
-
-    IFS=';' read -r -a assignments <<< "$1"
-    for assignment in "${assignments[@]}"; do
-        [[ -n "$assignment" ]] || continue
-        key="${assignment%%=*}"
-        value="${assignment#*=}"
-        printf -v "$key" '%s' "$value"
-    done
+    schema_load_combo_assignments "$1"
 
     NODES_CURRENT="$NODES"
     WORKERS_PER_NODE_CURRENT="$WORKERS_PER_NODE"
