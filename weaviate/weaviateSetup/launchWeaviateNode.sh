@@ -193,6 +193,12 @@ COMMON_ARGS=(
     --env HTTPS_PROXY=""
 )
 
+if [[ -n "${CORES:-}" ]]; then
+    COMMON_ARGS+=(
+        --env GOMAXPROCS="${CORES}"
+    )
+fi
+
 if [[ -n "${GRPC_MAX_MESSAGE_SIZE:-}" ]]; then
     COMMON_ARGS+=(
         --env GRPC_MAX_MESSAGE_SIZE="${GRPC_MAX_MESSAGE_SIZE}"
