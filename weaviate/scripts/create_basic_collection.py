@@ -31,7 +31,7 @@ def getenv_int(name: str, default: int) -> int:
 HNSW_M = getenv_int("HNSW_M", 16)
 HNSW_EF_CONSTRUCTION = getenv_int("HNSW_EF_CONSTRUCTION", 100)
 HNSW_EF_SEARCH = getenv_int("HNSW_EF_SEARCH", 64)
-SHARD_COUNT = getenv_int("SHARD_COUNT", 1)
+SHARD_COUNT = getenv_int("SHARD_COUNT", 0)
 
 
 def distance_metric():
@@ -77,6 +77,19 @@ def resolve_dynamic_threshold() -> int:
         "HNSW_DYNAMIC_THRESHOLD resolution requires HNSW_DYNAMIC_THRESHOLD, "
         "INSERT_CORPUS_SIZE, or INSERT_DATA_FILEPATH."
     )
+
+
+def resolve_shard_count() -> int:
+    if SHARD_COUNT != 0:
+        return SHARD_COUNT
+
+    worker_count = os.getenv("N_WORKERS")
+    if worker_count is None or worker_count.strip() == "":
+        raise ValueError(
+            "SHARD_COUNT=0 requires N_WORKERS to be set so shard count can be derived."
+        )
+
+    return int(worker_count)
 
 
 @dataclass(frozen=True)
@@ -182,6 +195,7 @@ def main() -> int:
 
     try:
         hnsw_dynamic_threshold = resolve_dynamic_threshold()
+        shard_count = resolve_shard_count()
         client, node = connect_from_registry(registry_path, args.rank)
 
         if not client.is_ready():
@@ -228,7 +242,7 @@ def main() -> int:
             ),
             sharding_config=(
                 wvc.config.Configure.sharding(
-                    desired_count=SHARD_COUNT
+                    desired_count=shard_count
                 )
             ),
             properties=[
@@ -244,6 +258,7 @@ def main() -> int:
                 COLLECTION_NAME, node.ip, node.http_port, node.grpc_port
             ), flush=True
         )
+        print("Shard count: {0}".format(shard_count), flush=True)
         print("Schema: no user properties; objects store UUID plus supplied vector")
         collection = client.collections.use(COLLECTION_NAME)
         collection_config = collection.config.get()

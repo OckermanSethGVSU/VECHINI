@@ -26,7 +26,7 @@ register_weaviate_var "ASYNC_INDEXING" "default" "true" "true false" "Enable Wea
 register_weaviate_var "GRPC_MAX_MESSAGE_SIZE" "default" "" "" "Optional Weaviate gRPC max message size in bytes passed to the server container"
 register_weaviate_var "DISABLE_LAZY_LOAD_SHARDS" "default" "true" "true false" "Disable Weaviate lazy shard loading"
 register_weaviate_var "HNSW_STARTUP_WAIT_FOR_VECTOR_CACHE" "default" "true" "true false" "Wait for HNSW vector cache at startup"
-register_weaviate_var "SHARD_COUNT" "default" "1" "" "Explicit shard count for collection creation; 0 lets the workflow derive or use engine defaults"
+register_weaviate_var "SHARD_COUNT" "default" "0" "" "Explicit shard count for collection creation; 0 derives the shard count from TOTAL"
 register_weaviate_var "HNSW_M" "default" "16" "" "HNSW M parameter"
 register_weaviate_var "HNSW_EF_CONSTRUCTION" "default" "100" "" "HNSW efConstruction parameter"
 register_weaviate_var "HNSW_DYNAMIC_THRESHOLD" "default" "" "" "Dynamic index threshold for flat-to-HNSW conversion; defaults to INSERT_CORPUS_SIZE or the row count of INSERT_DATA_FILEPATH when unset"
