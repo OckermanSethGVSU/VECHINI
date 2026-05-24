@@ -60,6 +60,16 @@ if [[ "$PLATFORM" == "POLARIS" ]]; then
 elif [[ "$PLATFORM" == "AURORA" ]]; then
     module load apptainer
     module load frameworks
+
+    if [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
+        DAOS_POOL="radix-io"
+        DAOS_CONT="vectorDBTesting"
+        module use /soft/modulefiles
+        module load daos
+        
+        launch-dfuse.sh ${DAOS_POOL}:${DAOS_CONT}
+        mkdir -p /tmp/${DAOS_POOL}/${DAOS_CONT}/$myDIR
+    fi
 fi
 
 if [[ -n "${ENV_PATH:-}" ]]; then
@@ -83,11 +93,13 @@ WORKER_HOSTS=$(paste -sd, worker_nodefile.txt)
 # Launch Weaviate cluster via MPI
 # ---------------------------------------------------------------
 if [[ -z "${CORES:-}" ]]; then
+    echo "Launching Weaviate without CPU binding"
     mpirun -n $TOTAL --ppn $WORKERS_PER_NODE --no-vni \
      --cpu-bind none --host "$WORKER_HOSTS" \
     ./launchWeaviateNode.sh $STORAGE_MEDIUM $USEPERF $TOTAL &
     
 else
+    echo "Binding Weaviate bound to $CORES cores each. ${TOTAL} workers, ${WORKERS_PER_NODE} workers per node. ${CORES} split among each node's workers."
     mpirun -n $TOTAL --ppn $WORKERS_PER_NODE --no-vni \
      --cpu-bind depth -d $CORES --host "$WORKER_HOSTS" \
     ./launchWeaviateNode.sh $STORAGE_MEDIUM $USEPERF $TOTAL &
