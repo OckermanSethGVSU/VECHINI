@@ -33,6 +33,7 @@ HNSW_EF_CONSTRUCTION = getenv_int("HNSW_EF_CONSTRUCTION", 100)
 HNSW_EF_SEARCH = getenv_int("HNSW_EF_SEARCH", 64)
 SHARD_COUNT = getenv_int("SHARD_COUNT", 0)
 SHARD_TRIGGER_SLACK = getenv_int("SHARD_TRIGGER_SLACK", 5000)
+INDEX_TYPE = os.getenv("INDEX_TYPE", "DYNAMIC").strip().upper()
 
 
 def distance_metric():
@@ -240,7 +241,6 @@ def main() -> int:
 
     try:
         shard_count = resolve_shard_count()
-        hnsw_dynamic_threshold = resolve_dynamic_threshold(shard_count)
         client, node = connect_from_registry(registry_path, args.rank)
 
         if not client.is_ready():
@@ -267,23 +267,32 @@ def main() -> int:
             print(collection_config, flush=True)
             return 0
 
+        vector_index_config = wvc.config.Configure.VectorIndex.hnsw(
+            distance_metric=distance_metric(),
+            ef=HNSW_EF_SEARCH,
+            ef_construction=HNSW_EF_CONSTRUCTION,
+            max_connections=HNSW_M,
+        )
+        if INDEX_TYPE == "DYNAMIC":
+            hnsw_dynamic_threshold = resolve_dynamic_threshold(shard_count)
+            vector_index_config = wvc.config.Configure.VectorIndex.dynamic(
+                distance_metric=distance_metric(),
+                threshold=hnsw_dynamic_threshold,
+                hnsw=vector_index_config,
+                flat=wvc.config.Configure.VectorIndex.flat(
+                    distance_metric=distance_metric(),
+                ),
+            )
+        elif INDEX_TYPE != "HNSW":
+            raise ValueError(
+                "INDEX_TYPE must be DYNAMIC or HNSW, got {0!r}".format(INDEX_TYPE)
+            )
+
         client.collections.create(
             name=COLLECTION_NAME,
             description="Minimal collection storing only UUIDs and self-provided vectors",
             vector_config=wvc.config.Configure.Vectors.self_provided(
-                vector_index_config=wvc.config.Configure.VectorIndex.dynamic(
-                    distance_metric=distance_metric(),
-                    threshold=hnsw_dynamic_threshold,
-                    hnsw=wvc.config.Configure.VectorIndex.hnsw(
-                        distance_metric=distance_metric(),
-                        ef=HNSW_EF_SEARCH,
-                        ef_construction=HNSW_EF_CONSTRUCTION,
-                        max_connections=HNSW_M,
-                    ),
-                    flat=wvc.config.Configure.VectorIndex.flat(
-                        distance_metric=distance_metric(),
-                    ),
-                )
+                vector_index_config=vector_index_config
             ),
             sharding_config=(
                 wvc.config.Configure.sharding(
