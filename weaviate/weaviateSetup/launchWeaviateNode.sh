@@ -196,28 +196,98 @@ WEAVIATE_CMD=(
     --raft-internal-rpc-port "${RAFT_INTERNAL_RPC_PORT}"
 )
 
+READY_TIMEOUT_SEC="${WEAVIATE_READY_TIMEOUT_SEC:-30}"
+LAUNCH_RETRIES="${WEAVIATE_LAUNCH_RETRIES:-3}"
+RETRY_BACKOFF_SEC="${WEAVIATE_RETRY_BACKOFF_SEC:-5}"
+
 wait_for_ready() {
     local host="$1"
     local port="$2"
+    local timeout_sec="$3"
+    local waited=0
 
     until NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" \
         curl -sf "http://${host}:${port}/v1/.well-known/ready" >/dev/null; do
+        if (( waited >= timeout_sec )); then
+            return 1
+        fi
         sleep 1
+        ((waited += 1))
     done
+
+    return 0
+}
+
+cleanup_failed_launch() {
+    local pid="$1"
+
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    fi
+
+    rm -rf "${TARGET_BASE}/node${RANK}"
+    mkdir -p "${TARGET_BASE}/node${RANK}"
+}
+
+sleep_for_follower_stagger() {
+    if [[ $RANK -le 0 ]]; then
+        return 0
+    fi
+
+    local stagger_sec="0.5"
+    if [[ $RANK -gt 1 ]]; then
+        stagger_sec="$(awk -v rank="$RANK" 'BEGIN { printf "%.1f", rank / 2 }')"
+    fi
+    echo "Follower rank ${RANK} staggering launch by ${stagger_sec}s before joining"
+    sleep "$stagger_sec"
+}
+
+launch_weaviate_with_retries() {
+    local mode="$1"
+    local attempt
+
+    for attempt in $(seq 1 "${LAUNCH_RETRIES}"); do
+        if [[ "$mode" == "bootstrap" ]]; then
+            apptainer exec \
+                "${COMMON_ARGS[@]}" \
+                "${APPTAINER_ARGS[@]}" \
+                --env RAFT_BOOTSTRAP_EXPECT=1 \
+                "${IMAGE}" \
+                "${WEAVIATE_CMD[@]}" \
+                > "rank${RANK}.out" 2>&1 &
+        else
+            apptainer exec \
+                "${COMMON_ARGS[@]}" \
+                "${APPTAINER_ARGS[@]}" \
+                --env CLUSTER_JOIN="${BOOTSTRAP_IP}:${BOOTSTRAP_GOSSIP_PORT}" \
+                "${IMAGE}" \
+                "${WEAVIATE_CMD[@]}" \
+                > "rank${RANK}.out" 2>&1 &
+        fi
+        LAUNCH_PID=$!
+
+        if wait_for_ready "${IP_ADDR}" "${HTTP_PORT}" "${READY_TIMEOUT_SEC}"; then
+            echo "Rank ${RANK} became ready on attempt ${attempt}/${LAUNCH_RETRIES}" >&2
+            return 0
+        fi
+
+        echo "Rank ${RANK} failed to become ready within ${READY_TIMEOUT_SEC}s on attempt ${attempt}/${LAUNCH_RETRIES}" >&2
+        cleanup_failed_launch "$LAUNCH_PID"
+
+        if (( attempt < LAUNCH_RETRIES )); then
+            sleep "${RETRY_BACKOFF_SEC}"
+        fi
+    done
+
+    echo "Rank ${RANK} exhausted ${LAUNCH_RETRIES} launch attempts without reaching readiness" >&2
+    return 1
 }
 
 if [[ $RANK -eq 0 ]]; then
     echo "Launching founding node ${NODE_NAME}"
 
-    apptainer exec \
-        "${COMMON_ARGS[@]}" \
-        "${APPTAINER_ARGS[@]}" \
-        --env RAFT_BOOTSTRAP_EXPECT=1 \
-        "${IMAGE}" \
-        "${WEAVIATE_CMD[@]}" \
-        > "rank${RANK}.out" 2>&1 &
-
-    wait_for_ready "${IP_ADDR}" "${HTTP_PORT}"
+    launch_weaviate_with_retries bootstrap || exit 1
 else
     until bash -c "exec 3<>/dev/tcp/${BOOTSTRAP_IP}/${BOOTSTRAP_GOSSIP_PORT}" 2>/dev/null; do
         sleep 0.2
@@ -227,19 +297,13 @@ else
         sleep 0.2
     done
 
+    sleep_for_follower_stagger
+
     echo "Launching follower node ${NODE_NAME} via ${BOOTSTRAP_NODE_NAME}@${BOOTSTRAP_IP}:${BOOTSTRAP_GOSSIP_PORT}"
 
-    apptainer exec \
-        "${COMMON_ARGS[@]}" \
-        "${APPTAINER_ARGS[@]}" \
-        --env CLUSTER_JOIN="${BOOTSTRAP_IP}:${BOOTSTRAP_GOSSIP_PORT}" \
-        "${IMAGE}" \
-        "${WEAVIATE_CMD[@]}" \
-        > "rank${RANK}.out" 2>&1 &
-
-    wait_for_ready "${IP_ADDR}" "${HTTP_PORT}"
+    launch_weaviate_with_retries follower || exit 1
 fi
 
 touch "./runtime_state/weaviate_running${RANK}.txt"
 
-wait
+wait "${LAUNCH_PID}"
