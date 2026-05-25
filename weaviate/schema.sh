@@ -27,17 +27,21 @@ register_weaviate_var "GRPC_MAX_MESSAGE_SIZE" "default" "" "" "Optional Weaviate
 register_weaviate_var "DISABLE_LAZY_LOAD_SHARDS" "default" "true" "true false" "Disable Weaviate lazy shard loading"
 register_weaviate_var "HNSW_STARTUP_WAIT_FOR_VECTOR_CACHE" "default" "true" "true false" "Wait for HNSW vector cache at startup"
 register_weaviate_var "SHARD_COUNT" "default" "0" "" "Explicit shard count for collection creation; 0 derives the shard count from TOTAL"
+register_weaviate_var "SHARD_TRIGGER_SLACK" "default" "5000" "" "Slack subtracted from the least-populated shard estimate when auto-deriving the dynamic HNSW threshold for INDEX, QUERY, and MIXED"
 register_weaviate_var "HNSW_M" "default" "16" "" "HNSW M parameter"
 register_weaviate_var "HNSW_EF_CONSTRUCTION" "default" "100" "" "HNSW efConstruction parameter"
 register_weaviate_var "HNSW_DYNAMIC_THRESHOLD" "default" "" "" "Dynamic index threshold for flat-to-HNSW conversion; defaults to INSERT_CORPUS_SIZE or the row count of INSERT_DATA_FILEPATH when unset"
 
 # Insert / index workload
 register_weaviate_var "INSERT_CLIENTS_PER_WORKER" "default" "1" "" "Insert clients per worker"
+register_weaviate_var "TOTAL_INSERT_CLIENTS" "default" "" "" "Optional total insert clients across the run; when set, insert or index clients are packed across workers using INSERT_CLIENTS_PER_WORKER as per-worker capacity"
 
 # Query workload
 register_weaviate_var "QUERY_TOPK" "default" "10" "" "Query top-k"
 register_weaviate_var "HNSW_EF_SEARCH" "default" "64" "" "HNSW ef parameter used in collection creation for query-time search breadth"
 register_weaviate_var "QUERY_CLIENTS_PER_WORKER" "default" "1" "" "Query clients per worker rank"
+register_weaviate_var "TOTAL_QUERY_CLIENTS" "default" "" "" "Optional total query clients across the run; when set, query clients are packed across workers using QUERY_CLIENTS_PER_WORKER as per-worker capacity"
+register_weaviate_var "POLL_INTERVAL" "default" "0.1" "" "Polling interval in seconds for quiescence checks after insert or index completion; fractional seconds are allowed"
 
 # Mixed workload
 register_weaviate_var "MIXED_INSERT_DATA_FILEPATH" "conditional" "" "" "Path to the data that the mixed insert clients will use" "TASK=MIXED"
