@@ -1,5 +1,6 @@
 import csv
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -76,10 +77,16 @@ def resolve_client_npy_path(run_dir, filename, active_task):
     raise FileNotFoundError(f"missing client timing npy file: {path}")
 
 
-def summarize_npy(path, run_label, rank, name, batch_size):
+def summarize_npy(path, run_label, rank, name, batch_size, vector_count):
     arr = np.load(path) * 1000
     total_ms = np.sum(arr)
     total_s = total_ms / 1000
+    if total_s == 0:
+        op_rate = 0.0
+        vector_rate = 0.0
+    else:
+        op_rate = len(arr) / total_s
+        vector_rate = vector_count / total_s
     return [
         run_label,
         batch_size,
@@ -89,8 +96,8 @@ def summarize_npy(path, run_label, rank, name, batch_size):
         np.mean(arr),
         np.std(arr),
         np.percentile(arr, 99),
-        len(arr) / total_s,
-        (batch_size * len(arr)) / total_s,
+        op_rate,
+        vector_rate,
     ], arr
 
 
@@ -109,21 +116,29 @@ def ag_stats(run_label, batch_size, rank, name, arr, total_time, corpus_size):
     ]
 
 
-def extract_time(times_path, rank):
-    target_row = None
+def load_client_rows(times_path):
+    rows = {}
     with times_path.open(newline="") as f:
-        reader = csv.reader(f)
+        reader = csv.DictReader(f)
+        required = {"worker", "client", "global_client", "start_idx", "end_idx", "shared_loop_start_to_searchable"}
+        missing = required.difference(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"missing required columns in {times_path}: {sorted(missing)}")
+
         for row in reader:
-            if len(row) <= 10:
-                continue
-            if row[0] == str(rank):
-                target_row = row
-                break
+            worker = int(row["worker"])
+            client = int(row["client"])
+            rows[(worker, client)] = {
+                "global_client": int(row["global_client"]),
+                "start_idx": int(row["start_idx"]),
+                "end_idx": int(row["end_idx"]),
+                "shared_loop_start_to_searchable": float(row["shared_loop_start_to_searchable"]),
+            }
 
-    if target_row is None:
-        raise ValueError(f"could not find rank {rank} in {times_path}")
+    if not rows:
+        raise ValueError(f"no client timing rows found in {times_path}")
 
-    return float(target_row[10])
+    return rows
 
 
 def discover_runs(base_dir, active_task, batch_sizes):
@@ -155,56 +170,66 @@ def resolve_corpus_size(active_task):
     return int(arr.shape[0])
 
 
-def summarize_run(run_dir, batch_size, run_label, clients, clients_per_proxy, corpus_size, active_task):
+def summarize_run(run_dir, batch_size, run_label, corpus_size, active_task):
     summary_rows = []
     all_prep = []
     all_upload = []
     all_op = []
+    client_rows = load_client_rows(run_dir / f"{active_task.lower()}_times.csv")
 
-    for worker in range(clients):
-        for client in range(clients_per_proxy):
-            prep, prep_arr = summarize_npy(
-                resolve_client_npy_path(
-                    run_dir,
-                    f"batch_construction_times_w{worker}_c{client}.npy",
-                    active_task,
-                ),
-                run_label,
-                worker,
-                "prep",
-                batch_size,
+    for worker, client in discover_worker_clients(run_dir, active_task):
+        client_row = client_rows.get((worker, client))
+        if client_row is None:
+            raise ValueError(
+                f"missing timing CSV row for worker={worker} client={client} in {run_dir / f'{active_task.lower()}_times.csv'}"
             )
-            upload, upload_arr = summarize_npy(
-                resolve_client_npy_path(
-                    run_dir,
-                    f"upload_times_w{worker}_c{client}.npy",
-                    active_task,
-                ),
-                run_label,
-                worker,
-                "upload",
-                batch_size,
-            )
-            op, op_arr = summarize_npy(
-                resolve_client_npy_path(
-                    run_dir,
-                    f"op_times_w{worker}_c{client}.npy",
-                    active_task,
-                ),
-                run_label,
-                worker,
-                "op",
-                batch_size,
-            )
-            summary_rows.extend([prep, upload, op])
-            all_prep.append(prep_arr)
-            all_upload.append(upload_arr)
-            all_op.append(op_arr)
+        global_client = client_row["global_client"]
+        vector_count = client_row["end_idx"] - client_row["start_idx"]
+        prep, prep_arr = summarize_npy(
+            resolve_client_npy_path(
+                run_dir,
+                f"batch_construction_times_w{worker}_c{client}.npy",
+                active_task,
+            ),
+            run_label,
+            global_client,
+            "prep",
+            batch_size,
+            vector_count,
+        )
+        upload, upload_arr = summarize_npy(
+            resolve_client_npy_path(
+                run_dir,
+                f"upload_times_w{worker}_c{client}.npy",
+                active_task,
+            ),
+            run_label,
+            global_client,
+            "upload",
+            batch_size,
+            vector_count,
+        )
+        op, op_arr = summarize_npy(
+            resolve_client_npy_path(
+                run_dir,
+                f"op_times_w{worker}_c{client}.npy",
+                active_task,
+            ),
+            run_label,
+            global_client,
+            "op",
+            batch_size,
+            vector_count,
+        )
+        summary_rows.extend([prep, upload, op])
+        all_prep.append(prep_arr)
+        all_upload.append(upload_arr)
+        all_op.append(op_arr)
 
     stacked_prep = np.concatenate(all_prep)
     stacked_upload = np.concatenate(all_upload)
     stacked_op = np.concatenate(all_op)
-    aggregate_time = extract_time(run_dir / f"{active_task.lower()}_times.csv", 0)
+    aggregate_time = min(row["shared_loop_start_to_searchable"] for row in client_rows.values())
 
     summary_rows.extend(
         [
@@ -222,14 +247,35 @@ def summarize_run(run_dir, batch_size, run_label, clients, clients_per_proxy, co
     return summary_rows
 
 
+def discover_worker_clients(run_dir, active_task):
+    task_upper = active_task.upper()
+    if task_upper == "QUERY":
+        npy_dir = run_dir / "queryNPY"
+    elif task_upper == "INSERT":
+        npy_dir = run_dir / "uploadNPY"
+    else:
+        raise ValueError(f"unsupported ACTIVE_TASK for client timing summary: {active_task}")
+
+    pattern = re.compile(r"op_times_w(\d+)_c(\d+)\.npy$")
+    worker_clients = []
+    for path in sorted(npy_dir.glob("op_times_w*_c*.npy")):
+        match = pattern.fullmatch(path.name)
+        if match is None:
+            continue
+        worker_clients.append((int(match.group(1)), int(match.group(2))))
+
+    if not worker_clients:
+        raise FileNotFoundError(f"no client timing npy files found under {npy_dir}")
+
+    return worker_clients
+
+
 def main():
     active_task = os.getenv("ACTIVE_TASK", "").strip().upper()
     if not active_task:
         raise ValueError("ACTIVE_TASK is required")
 
     corpus_size = resolve_corpus_size(active_task)
-    clients_per_proxy = int(env_required(f"{active_task}_CLIENTS_PER_WORKER"))
-    clients = int(env_required("N_WORKERS"))
     batch_sizes = parse_batch_sizes(os.getenv(f"{active_task}_BATCH_SIZE", ""))
 
     base_dir = Path(".")
@@ -238,7 +284,7 @@ def main():
     combined_rows = []
     for run_dir, batch_size, run_label in runs:
         combined_rows.extend(
-            summarize_run(run_dir, batch_size, run_label, clients, clients_per_proxy, corpus_size, active_task)
+            summarize_run(run_dir, batch_size, run_label, corpus_size, active_task)
         )
 
     with (base_dir / f"{active_task.lower()}_summary.csv").open("w", newline="") as f:
