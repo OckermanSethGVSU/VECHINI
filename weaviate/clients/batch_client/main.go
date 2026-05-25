@@ -65,8 +65,9 @@ type collectionSnapshot struct {
 }
 
 type ShardRef struct {
-	NodeName  string
-	ShardName string
+	NodeName    string
+	ShardName   string
+	ObjectCount int
 }
 
 var debugHTTPClient = &http.Client{
@@ -432,8 +433,9 @@ func getCollectionSnapshot(ctx context.Context, client *weaviate.Client, classNa
 			snap.TotalObjects += int(shard.ObjectCount)
 			snap.TotalQueue += int(shard.VectorQueueLength)
 			snap.ShardRefs = append(snap.ShardRefs, ShardRef{
-				NodeName:  nodeResp.Name,
-				ShardName: shard.Name,
+				NodeName:    nodeResp.Name,
+				ShardName:   shard.Name,
+				ObjectCount: int(shard.ObjectCount),
 			})
 			if strings.EqualFold(shard.VectorIndexingStatus, "INDEXING") {
 				snap.Indexing++
@@ -455,6 +457,8 @@ func getUnderlyingIndexStatus(ctx context.Context, nodes []*NodeInfo, snap colle
 
 	var details []string
 	targetVector := "default"
+	hnswCount := 0
+	flatCount := 0
 
 	for _, shardRef := range snap.ShardRefs {
 		node := nodeByName[shardRef.NodeName]
@@ -499,28 +503,41 @@ func getUnderlyingIndexStatus(ctx context.Context, nodes []*NodeInfo, snap colle
 		}
 		switch resp.StatusCode {
 		case http.StatusOK:
+			hnswCount++
 			details = append(details, fmt.Sprintf(
-				"%s/%s vector=%s status=200 body=%q",
+				"%s/%s objects=%d vector=%s status=200 body=%q",
 				node.IP,
 				shardRef.ShardName,
+				shardRef.ObjectCount,
 				targetVector,
 				snippet,
 			))
 		case http.StatusBadRequest:
+			flatCount++
 			details = append(details, fmt.Sprintf(
-				"%s/%s vector=%s status=400 body=%q",
+				"%s/%s objects=%d vector=%s status=400 body=%q",
 				node.IP,
 				shardRef.ShardName,
+				shardRef.ObjectCount,
 				targetVector,
 				snippet,
 			))
-			return false, strings.Join(details, "; "), nil
 		default:
 			return false, "", fmt.Errorf("debug stats %s returned http %d body=%q", debugURL, resp.StatusCode, snippet)
 		}
 	}
 
-	return true, strings.Join(details, "; "), nil
+	summary := fmt.Sprintf(
+		"shards=%d hnsw_indexes=%d flat_indexes=%d",
+		len(snap.ShardRefs),
+		hnswCount,
+		flatCount,
+	)
+	if len(details) == 0 {
+		return flatCount == 0, summary, nil
+	}
+
+	return flatCount == 0, summary + "; " + strings.Join(details, "; "), nil
 }
 
 // waitForQuiescence is the Weaviate-native completion check.
@@ -1032,6 +1049,39 @@ func splitRange(n, parts, idx int) (start, end int) {
 	return start, end
 }
 
+// workerAndClientForGlobalRank packs logical clients across workers using the
+// configured clients-per-worker value as worker capacity.
+func workerAndClientForGlobalRank(globalRank, nWorkers, clientsPerWorker int) (int, int, error) {
+	if clientsPerWorker <= 0 {
+		return 0, 0, fmt.Errorf("clientsPerWorker must be positive")
+	}
+
+	workerRank := globalRank / clientsPerWorker
+	clientID := globalRank % clientsPerWorker
+	if workerRank >= nWorkers {
+		return 0, 0, fmt.Errorf(
+			"global rank %d maps to worker %d, but only %d workers are available",
+			globalRank,
+			workerRank,
+			nWorkers,
+		)
+	}
+	return workerRank, clientID, nil
+}
+
+// clientRange preserves the historical two-stage split unless an explicit
+// total query client count asks for one global split across only active clients.
+func clientRange(totalRows, workerRank, clientID, nWorkers, clientsPerWorker, totalClients int, explicitTotalClients bool) (int, int) {
+	if explicitTotalClients {
+		return splitRange(totalRows, totalClients, workerRank*clientsPerWorker+clientID)
+	}
+
+	workerStart, workerEnd := splitRange(totalRows, nWorkers, workerRank)
+	workerLen := workerEnd - workerStart
+	clientStartOff, clientEndOff := splitRange(workerLen, clientsPerWorker, clientID)
+	return workerStart + clientStartOff, workerStart + clientEndOff
+}
+
 // envEnabled implements the repo's permissive boolean env parsing.
 func envEnabled(name string) bool {
 	value := strings.TrimSpace(os.Getenv(name))
@@ -1061,6 +1111,25 @@ func getEnvIntDefault(defaultValue int, names ...string) int {
 			log.Fatalf("invalid %s=%q", name, value)
 		}
 		return parsed
+	}
+
+	return defaultValue
+}
+
+// getEnvDurationSecondsDefault returns the first positive float value found in
+// the provided env vars, interpreted as seconds.
+func getEnvDurationSecondsDefault(defaultValue time.Duration, names ...string) time.Duration {
+	for _, name := range names {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value == "" {
+			continue
+		}
+
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || parsed <= 0 {
+			log.Fatalf("invalid %s=%q", name, value)
+		}
+		return time.Duration(parsed * float64(time.Second))
 	}
 
 	return defaultValue
@@ -1124,6 +1193,8 @@ func clientWorker(
 	workerRank int,
 	clientID int,
 	clientsPerWorker int,
+	totalClients int,
+	explicitTotalClients bool,
 	totalRows int,
 	input *InputData,
 	sweeps []SweepConfig,
@@ -1153,11 +1224,7 @@ func clientWorker(
 		log.Fatalf("invalid N_WORKERS=%q", nWorkersStr)
 	}
 
-	workerStart, workerEnd := splitRange(totalRows, nWorkers, workerRank)
-	workerLen := workerEnd - workerStart
-	clientStartOff, clientEndOff := splitRange(workerLen, clientsPerWorker, clientID)
-	startIdx := workerStart + clientStartOff
-	endIdx := workerStart + clientEndOff
+	startIdx, endIdx := clientRange(totalRows, workerRank, clientID, nWorkers, clientsPerWorker, totalClients, explicitTotalClients)
 	localRows := endIdx - startIdx
 
 	var local [][]float32
@@ -1213,6 +1280,7 @@ func clientWorker(
 	lastID := int64(totalRows - 1)
 	topK := getEnvIntDefault(10, "QUERY_TOPK", "QUERY_TOP_K", "TOP_K")
 	rpcTimeout := time.Duration(getEnvIntDefault(1800, "RPC_TIMEOUT_SEC", "QUERY_RPC_SEC", "INSERT_RPC_SEC")) * time.Second
+	pollInterval := getEnvDurationSecondsDefault(100*time.Millisecond, "POLL_INTERVAL")
 	if rpcTimeout <= 0 {
 		rpcTimeout = 30 * time.Minute
 	}
@@ -1366,7 +1434,7 @@ func clientWorker(
 			if opMode == "INSERT" {
 				lastInsertCompleteAt := endLoop
 				// waitCtx, waitCancel := context.WithTimeout(ctx, *time.Minute)
-				searchableAt, err := waitForQuiescence(ctx, client, allNodes, collectionName, mode == "INDEX", 5*time.Millisecond)
+				searchableAt, err := waitForQuiescence(ctx, client, allNodes, collectionName, mode == "INDEX", pollInterval)
 				// waitCancel()
 				if err != nil {
 					log.Printf("wait for searchable collection failed: %v", err)
@@ -1519,6 +1587,27 @@ func main() {
 		log.Fatalf("invalid %s=%q", clientsEnv, clientsStr)
 	}
 
+	totalClients := nWorkers * clientsPerWorker
+	explicitTotalClients := false
+	totalClientsEnv := fmt.Sprintf("TOTAL_%s_CLIENTS", workloadMode)
+	configuredTotalClients, isSet, err := getOptionalEnvInt(totalClientsEnv)
+	if err != nil || (isSet && configuredTotalClients <= 0) {
+		log.Fatalf("invalid %s=%q", totalClientsEnv, os.Getenv(totalClientsEnv))
+	}
+	if isSet {
+		if configuredTotalClients > totalClients {
+			log.Fatalf(
+				"%s=%d exceeds capacity N_WORKERS * %s = %d",
+				totalClientsEnv,
+				configuredTotalClients,
+				clientsEnv,
+				totalClients,
+			)
+		}
+		totalClients = configuredTotalClients
+		explicitTotalClients = true
+	}
+
 	corpusEnv := fmt.Sprintf("%s_CORPUS_SIZE", workloadMode)
 	corpusSizeStr := strings.TrimSpace(os.Getenv(corpusEnv))
 	corpusSize := 0
@@ -1550,10 +1639,9 @@ func main() {
 		Label:      fmt.Sprintf("batch_%d", batchSize),
 	}}
 
-	totalClients := nWorkers * clientsPerWorker
 	fmt.Printf(
-		"CORPUS_SIZE=%d nWorkers=%d clientsPerWorker=%d totalClients=%d DATA_FILEPATH=%s batch_size=%d\n",
-		corpusSize, nWorkers, clientsPerWorker, totalClients, dataPath, batchSize,
+		"CORPUS_SIZE=%d nWorkers=%d clientsPerWorker=%d totalClients=%d explicitTotalClients=%t DATA_FILEPATH=%s batch_size=%d\n",
+		corpusSize, nWorkers, clientsPerWorker, totalClients, explicitTotalClients, dataPath, batchSize,
 	)
 
 	vectorDim, hasVectorDim, err := getOptionalEnvInt("VECTOR_DIM")
@@ -1563,6 +1651,11 @@ func main() {
 
 	activeTaskStreamingEnv := fmt.Sprintf("%s_STREAMING", strings.ToUpper(strings.TrimSpace(activeTask)))
 	streamingReads := envEnabled(activeTaskStreamingEnv)
+	if !streamingReads && workloadMode == "INSERT" {
+		// INDEX reuses the insert workload path, so inherit INSERT_STREAMING when
+		// the caller did not define a separate INDEX_STREAMING knob.
+		streamingReads = envEnabled("INSERT_STREAMING")
+	}
 	input := &InputData{
 		Streaming: streamingReads,
 		Path:      dataPath,
@@ -1633,11 +1726,28 @@ func main() {
 		resultWriters[i] = &LockedCSVWriter{}
 	}
 
-	for w := 0; w < nWorkers; w++ {
-		for c := 0; c < clientsPerWorker; c++ {
-			wg.Add(1)
-			go clientWorker(&wg, w, c, clientsPerWorker, corpusSize, input, sweeps, barriers, sharedTimings, startGates, writeCoordinators, resultWriters)
+	for globalRank := 0; globalRank < totalClients; globalRank++ {
+		workerRank, clientID, err := workerAndClientForGlobalRank(globalRank, nWorkers, clientsPerWorker)
+		if err != nil {
+			log.Fatal(err)
 		}
+		wg.Add(1)
+		go clientWorker(
+			&wg,
+			workerRank,
+			clientID,
+			clientsPerWorker,
+			totalClients,
+			explicitTotalClients,
+			corpusSize,
+			input,
+			sweeps,
+			barriers,
+			sharedTimings,
+			startGates,
+			writeCoordinators,
+			resultWriters,
+		)
 	}
 
 	wg.Wait()
