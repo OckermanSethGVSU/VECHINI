@@ -32,6 +32,7 @@ HNSW_M = getenv_int("HNSW_M", 16)
 HNSW_EF_CONSTRUCTION = getenv_int("HNSW_EF_CONSTRUCTION", 100)
 HNSW_EF_SEARCH = getenv_int("HNSW_EF_SEARCH", 64)
 SHARD_COUNT = getenv_int("SHARD_COUNT", 0)
+SHARD_TRIGGER_SLACK = getenv_int("SHARD_TRIGGER_SLACK", 5000)
 
 
 def distance_metric():
@@ -50,20 +51,64 @@ def npy_row_count(path: Path) -> int:
     return int(arr.shape[0])
 
 
-def resolve_dynamic_threshold() -> int:
+def least_populated_shard_size(total_objects: int, shard_count: int) -> int:
+    if shard_count <= 0:
+        raise ValueError("shard_count must be positive, got {0}".format(shard_count))
+    return total_objects // shard_count
+
+
+def resolve_dynamic_threshold(shard_count: int) -> int:
     explicit = os.getenv("HNSW_DYNAMIC_THRESHOLD")
     if explicit is not None and explicit.strip() != "":
         return int(explicit)
 
     task = os.getenv("TASK", "").strip().upper()
 
-    def adjust_threshold(threshold: int) -> int:
+    def adjust_threshold(total_objects: int) -> int:
         if task == "INSERT":
-            print("Doubling the threshold for HNSW index build to isolate insert performance. Set TASK='INDEX' to time indexing, or explicitly set 'HNSW_DYNAMIC_THRESHOLD' if you want a custom threshold.", flush=True)
-            return threshold * 2
-        if task in ["INDEX","QUERY","MIXED"]:
-            return max(1, threshold - 1)
-        return threshold
+            threshold = total_objects * 2
+            print(
+                "Auto-derived HNSW_DYNAMIC_THRESHOLD={0} from total_objects={1} "
+                "for TASK=INSERT to isolate insert performance.".format(
+                    threshold,
+                    total_objects,
+                ),
+                flush=True,
+            )
+            return threshold
+
+        if task in ["INDEX", "QUERY", "MIXED"]:
+            least_populated = least_populated_shard_size(total_objects, shard_count)
+            if shard_count == 1 and task in ["INDEX", "QUERY"]:
+                threshold = max(0, total_objects - 1)
+                print(
+                    "Auto-derived HNSW_DYNAMIC_THRESHOLD={0} from total_objects={1} "
+                    "for single-node TASK={2}.".format(
+                        threshold,
+                        total_objects,
+                        task,
+                    ),
+                    flush=True,
+                )
+            else:
+                slack = SHARD_TRIGGER_SLACK if shard_count > 1 else 0
+                threshold = max(0, least_populated - slack)
+                print(
+                    "Auto-derived HNSW_DYNAMIC_THRESHOLD={0} from total_objects={1}, "
+                    "shard_count={2}, least_populated_shard={3}, shard_trigger_slack={4} "
+                    "for TASK={5}.".format(
+                        threshold,
+                        total_objects,
+                        shard_count,
+                        least_populated,
+                        slack,
+                        task,
+                    ),
+                    flush=True,
+                )
+            return threshold
+
+        return total_objects
 
     corpus_size = os.getenv("INSERT_CORPUS_SIZE")
     if corpus_size is not None and corpus_size.strip() != "":
@@ -194,8 +239,8 @@ def main() -> int:
     client = None
 
     try:
-        hnsw_dynamic_threshold = resolve_dynamic_threshold()
         shard_count = resolve_shard_count()
+        hnsw_dynamic_threshold = resolve_dynamic_threshold(shard_count)
         client, node = connect_from_registry(registry_path, args.rank)
 
         if not client.is_ready():
