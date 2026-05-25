@@ -23,6 +23,7 @@ register_weaviate_var "ALLOW_REMOTE_WEAVIATE_IMAGE" "default" "false" "true fals
 register_weaviate_var "DEBUG" "default" "false" "true false" "Enable verbose client debug logging"
 register_weaviate_var "GPU_INDEX" "default" "false" "true false" "Whether to use GPU indexing"
 register_weaviate_var "ASYNC_INDEXING" "default" "true" "true false" "Enable Weaviate async indexing"
+register_weaviate_var "INDEX_TYPE" "default" "DYNAMIC" "DYNAMIC HNSW" "Vector index type for collection creation; DYNAMIC uses flat-to-HNSW conversion and HNSW creates a plain HNSW index"
 register_weaviate_var "GRPC_MAX_MESSAGE_SIZE" "default" "" "" "Optional Weaviate gRPC max message size in bytes passed to the server container"
 register_weaviate_var "DISABLE_LAZY_LOAD_SHARDS" "default" "true" "true false" "Disable Weaviate lazy shard loading"
 register_weaviate_var "HNSW_STARTUP_WAIT_FOR_VECTOR_CACHE" "default" "true" "true false" "Wait for HNSW vector cache at startup"
