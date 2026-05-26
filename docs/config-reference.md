@@ -182,16 +182,22 @@ Source of truth:
 | `DEBUG` | `false` | `true`, `false` | Enable verbose client debug logging |
 | `GPU_INDEX` | `false` | `true`, `false` | Whether to use GPU indexing |
 | `ASYNC_INDEXING` | `true` | `true`, `false` | Enable Weaviate async indexing |
+| `INDEX_TYPE` | `DYNAMIC` | `DYNAMIC`, `HNSW` | Vector index type for collection creation; DYNAMIC uses flat-to-HNSW conversion and HNSW creates a plain HNSW index |
+| `GRPC_MAX_MESSAGE_SIZE` | optional | free-form | Optional Weaviate gRPC max message size in bytes passed to the server container |
 | `DISABLE_LAZY_LOAD_SHARDS` | `true` | `true`, `false` | Disable Weaviate lazy shard loading |
 | `HNSW_STARTUP_WAIT_FOR_VECTOR_CACHE` | `true` | `true`, `false` | Wait for HNSW vector cache at startup |
-| `SHARD_COUNT` | `1` | free-form | Explicit shard count for collection creation; 0 lets the workflow derive or use engine defaults |
+| `SHARD_COUNT` | `0` | free-form | Explicit shard count for collection creation; 0 derives the shard count from TOTAL |
+| `SHARD_TRIGGER_SLACK` | `0` | free-form | Slack subtracted from the least-populated shard estimate when auto-deriving the dynamic HNSW threshold for INDEX, QUERY, and MIXED |
 | `HNSW_M` | `16` | free-form | HNSW M parameter |
 | `HNSW_EF_CONSTRUCTION` | `100` | free-form | HNSW efConstruction parameter |
 | `HNSW_DYNAMIC_THRESHOLD` | optional | free-form | Dynamic index threshold for flat-to-HNSW conversion; defaults to INSERT_CORPUS_SIZE or the row count of INSERT_DATA_FILEPATH when unset |
 | `INSERT_CLIENTS_PER_WORKER` | `1` | free-form | Insert clients per worker |
+| `TOTAL_INSERT_CLIENTS` | optional | free-form | Optional total insert clients across the run; when set, insert or index clients are packed across workers using INSERT_CLIENTS_PER_WORKER as per-worker capacity |
 | `QUERY_TOPK` | `10` | free-form | Query top-k |
 | `HNSW_EF_SEARCH` | `64` | free-form | HNSW ef parameter used in collection creation for query-time search breadth |
 | `QUERY_CLIENTS_PER_WORKER` | `1` | free-form | Query clients per worker rank |
+| `TOTAL_QUERY_CLIENTS` | optional | free-form | Optional total query clients across the run; when set, query clients are packed across workers using QUERY_CLIENTS_PER_WORKER as per-worker capacity |
+| `POLL_INTERVAL` | `0.1` | free-form | Polling interval in seconds for quiescence checks after insert or index completion; fractional seconds are allowed |
 | `MIXED_INSERT_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Path to the data that the mixed insert clients will use |
 | `MIXED_INSERT_CLIENTS` | `1` | free-form | Mixed insert clients |
 | `MIXED_INSERT_MODE` | `MAX` | `MAX`, `RATE` | Mode of operation for insert clients. 'MAX' sends the inserts as fast as possible, while 'RATE' also you to specify a rate per second |
