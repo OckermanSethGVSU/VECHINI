@@ -115,6 +115,25 @@ for r in $(seq 0 "${MAX_RANK}"); do
 done
 echo "[INFO] All ${TOTAL} workers are ready"
 
+# Launch profiling on each node
+allNodes=$((NODES + 1))
+for ((i=0; i<allNodes; i++)); do
+    
+    # +1 b/c it uses 1 indexing
+    line_num=$((i + 1))
+    entry=$(sed -n "${line_num}p" "$PBS_NODEFILE")
+    echo "Launching profiling for node ${i}"
+
+    if [[ $i -eq 0 ]]; then
+        profile_arg="client_node"
+    else
+        profile_arg="worker_$((i - 1))"
+    fi
+
+    mpirun -n 1 --ppn 1 --cpu-bind none --host $entry python3 profile.py $profile_arg $PLATFORM &
+    sleep 1
+    
+done
 
 NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" python3 health_check.py
 NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" python3 create_basic_collection.py
@@ -132,6 +151,7 @@ NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="
 
 mkdir -p uploadNPY
 mv *.npy uploadNPY/
+touch ./runtime_state/insert_index_done.txt
 
 if [[ "$TASK" == "INSERT" || "$TASK" == "INDEX" ]]; then
         touch "runtime_state/flag.txt"
@@ -143,6 +163,8 @@ if [[ "$TASK" == "QUERY" ]]; then
 
     mkdir -p queryNPY
     mv *.npy queryNPY/
+
+    touch ./runtime_state/query_done.txt
     run_summary QUERY query
     touch "runtime_state/flag.txt"
 fi

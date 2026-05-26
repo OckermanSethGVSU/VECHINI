@@ -163,6 +163,8 @@ engine_copy_payload() {
         copy_engine_items "$ENGINE_DIR/weaviateSetup" "$target_dir" \
             "launchWeaviateNodeLocal.sh"
     else
+        copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" \
+            "profile.py"
         if [[ "${ALLOW_REMOTE_WEAVIATE_IMAGE:-false}" != "true" ]]; then
             if [[ ! -f "$ENGINE_DIR/sifs/$WEAVIATE_SIF" ]]; then
                 echo "Required payload item missing: $ENGINE_DIR/sifs/$WEAVIATE_SIF" >&2
