@@ -66,7 +66,6 @@ register_milvus_var "MIXED_DATA_FILEPATH" "default" "" "" "Mixed workload data f
 register_milvus_var "VECTOR_FIELD" "default" "" "" "Optional vector field override"
 register_milvus_var "ID_FIELD" "default" "" "" "Optional id field override"
 register_milvus_var "QUERY_EF_SEARCH" "default" "" "" "Optional query efSearch override"
-register_milvus_var "SEARCH_CONSISTENCY" "default" "" "" "Optional search consistency override"
 register_milvus_var "RPC_TIMEOUT" "default" "" "" "Optional RPC timeout override"
 
 register_milvus_var "MIXED_INSERT_BATCH_MIN" "default" "" "" "Optional randomized mixed insert batch lower bound"

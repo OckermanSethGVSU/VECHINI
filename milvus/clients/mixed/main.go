@@ -57,7 +57,6 @@ type config struct {
 	queryMode         runMode
 	insertOpsPerSec   float64
 	queryOpsPerSec    float64
-	searchConsistency string
 	rpcTimeout        time.Duration
 	dryRun            bool
 
@@ -155,7 +154,6 @@ type milvusBackend struct {
 	idField        string
 	topK           int
 	ef             int
-	consistency    entity.ConsistencyLevel
 }
 
 type dryRunBackend struct {
@@ -219,7 +217,6 @@ func main() {
 func parseFlags() (config, error) {
 	var cfg config
 	var mode string
-	var consistency string
 
 	// Flags default to environment variables so the runner can be driven from shell scripts.
 	flag.StringVar(&cfg.milvusAddress, "milvus-address", getenvDefault("MILVUS_ADDRESS", "127.0.0.1:19530"), "Milvus address")
@@ -231,10 +228,10 @@ func parseFlags() (config, error) {
 	flag.StringVar(&cfg.insertVectors, "insert-vectors", getenvDefault("MIXED_DATA_FILEPATH", ""), "Path to insert vectors .npy")
 	flag.StringVar(&cfg.queryVectors, "query-vectors", getenvDefault("QUERY_DATA_FILEPATH", ""), "Path to query vectors .npy")
 	flag.StringVar(&cfg.outputDir, "output-dir", getenvDefault("MIXED_RESULT_PATH", getenvDefault("RESULT_PATH", "")), "Directory for per-client JSONL logs")
-	flag.IntVar(&cfg.insertCorpusSize, "insert-corpus-size", getenvIntDefault("INSERT_CORPUS_SIZE", 0), "Rows to read from the insert matrix; 0 means all rows")
+	flag.IntVar(&cfg.insertCorpusSize, "insert-corpus-size", getenvIntDefault("MIXED_CORPUS_SIZE", getenvIntDefault("INSERT_CORPUS_SIZE", 0)), "Rows to read from the mixed insert matrix; 0 means all rows")
 	flag.IntVar(&cfg.queryCorpusSize, "query-corpus-size", getenvIntDefault("QUERY_CORPUS_SIZE", 0), "Rows to read from the query matrix; 0 means all rows")
-	flag.IntVar(&cfg.insertClients, "insert-clients", getenvIntDefault("INSERT_CLIENTS", 1), "Number of dedicated insert clients")
-	flag.IntVar(&cfg.queryClients, "query-clients", getenvIntDefault("QUERY_CLIENTS", 1), "Number of dedicated query clients")
+	flag.IntVar(&cfg.insertClients, "insert-clients", getenvIntDefault("MIXED_INSERT_CLIENTS", 1), "Number of dedicated insert clients")
+	flag.IntVar(&cfg.queryClients, "query-clients", getenvIntDefault("MIXED_QUERY_CLIENTS", 1), "Number of dedicated query clients")
 	flag.IntVar(&cfg.topK, "top-k", getenvIntDefault("TOP_K", 10), "Top-k results per query vector")
 	flag.IntVar(&cfg.ef, "ef", getenvIntDefault("EFSearch", 64), "Search ef parameter")
 	flag.StringVar(&mode, "mode", string(modeMax), "Execution mode: max or rate")
@@ -242,7 +239,6 @@ func parseFlags() (config, error) {
 	flag.StringVar((*string)(&cfg.queryMode), "query-mode", getenvDefault("QUERY_MODE", ""), "Per-role query mode override: max or rate")
 	flag.Float64Var(&cfg.insertOpsPerSec, "insert-ops-per-sec", getenvFloatDefault("INSERT_OPS_PER_SEC", 0), "Direct insert ops/sec cap across all insert clients")
 	flag.Float64Var(&cfg.queryOpsPerSec, "query-ops-per-sec", getenvFloatDefault("QUERY_OPS_PER_SEC", 0), "Direct query ops/sec cap across all query clients")
-	flag.StringVar(&consistency, "search-consistency", getenvDefault("SEARCH_CONSISTENCY", "bounded"), "Search consistency: strong, bounded, eventually, session, customized")
 	flag.DurationVar(&cfg.rpcTimeout, "rpc-timeout", getenvDurationDefault("RPC_TIMEOUT", 10*time.Minute), "Per-operation timeout")
 	flag.BoolVar(&cfg.dryRun, "dry-run", getenvBoolDefault("DRY_RUN", false), "Use an in-memory backend instead of Milvus")
 
@@ -264,7 +260,6 @@ func parseFlags() (config, error) {
 	if cfg.queryMode == "" {
 		cfg.queryMode = cfg.mode
 	}
-	cfg.searchConsistency = strings.ToLower(strings.TrimSpace(consistency))
 
 	if err := validateConfig(cfg); err != nil {
 		return config{}, err
@@ -318,9 +313,6 @@ func validateConfig(cfg config) error {
 		return err
 	}
 
-	if _, err := parseConsistency(cfg.searchConsistency); err != nil {
-		return err
-	}
 	if err := validateBatchConfig("insert", cfg.insertBatch); err != nil {
 		return err
 	}
@@ -821,10 +813,6 @@ func newBackendFactory(ctx context.Context, cfg config) (backendFactory, error) 
 			return shared, nil
 		}, nil
 	}
-	consistency, err := parseConsistency(cfg.searchConsistency)
-	if err != nil {
-		return nil, err
-	}
 	return func(clientID int, r role) (backend, error) {
 		// Each logical client gets its own Milvus connection and may be routed to a different proxy.
 		target, err := pickProxyTarget(cfg, r, clientID)
@@ -846,26 +834,8 @@ func newBackendFactory(ctx context.Context, cfg config) (backendFactory, error) 
 			idField:        cfg.idField,
 			topK:           cfg.topK,
 			ef:             cfg.ef,
-			consistency:    consistency,
 		}, nil
 	}, nil
-}
-
-func parseConsistency(value string) (entity.ConsistencyLevel, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "strong":
-		return entity.ClStrong, nil
-	case "bounded":
-		return entity.ClBounded, nil
-	case "eventually":
-		return entity.ClEventually, nil
-	case "session":
-		return entity.ClSession, nil
-	case "customized":
-		return entity.ClCustomized, nil
-	default:
-		return entity.ClStrong, fmt.Errorf("unsupported consistency level %q", value)
-	}
 }
 
 func (m *milvusBackend) Load(ctx context.Context) error {
@@ -896,8 +866,7 @@ func (m *milvusBackend) Search(ctx context.Context, vectors [][]float32, topK in
 		ctx,
 		milvusclient.NewSearchOption(m.collectionName, topK, queryVectors).
 			WithANNSField(m.vectorField).
-			WithSearchParam("ef", strconv.Itoa(m.ef)).
-			WithConsistencyLevel(m.consistency),
+			WithSearchParam("ef", strconv.Itoa(m.ef)),
 	)
 	if err != nil {
 		return nil, err
