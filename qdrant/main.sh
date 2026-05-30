@@ -70,7 +70,9 @@ wait_for_launch_stop_flag() {
     sleep 30
 }
 
-if [[ -n "${PBS_O_WORKDIR:-}" ]]; then
+if [[ -n "${RUN_DIR:-}" ]]; then
+    SCRIPT_DIR="$RUN_DIR"
+elif [[ -n "${PBS_O_WORKDIR:-}" ]]; then
     SCRIPT_DIR="$PBS_O_WORKDIR"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,9 +86,7 @@ if [[ -f ./run_config.env ]]; then
 fi
 
 RUN_DIR="${RUN_DIR:-$SCRIPT_DIR}"
-if [[ -z "${BASE_DIR:-}" ]]; then
-    BASE_DIR="$(dirname "$RUN_DIR")"
-fi
+BASE_DIR="${BASE_DIR:-$(dirname "$RUN_DIR")}"
 
 echo "[INFO] Using run directory: $RUN_DIR"
 cd "$RUN_DIR"
@@ -107,6 +107,7 @@ fi
 if [[ -n "${ENV_PATH:-}" ]]; then
     echo "Activating Python environment: $ENV_PATH"
     source "$ENV_PATH/bin/activate"
+else
     echo "ENV_PATH not set; using current Python environment: $(command -v python3)"
 fi
 
@@ -281,8 +282,8 @@ if [[ "$TASK" == "MIXED" ]]; then
         elif [[ -n "${INSERT_CORPUS_SIZE:-}" ]]; then
             INSERT_START_ID="$INSERT_CORPUS_SIZE"
         elif [[ -n "${INSERT_DATA_FILEPATH:-}" ]]; then
-            if ! INSERT_START_ID="$(python3 inspect.py "$INSERT_DATA_FILEPATH")"; then
-                echo "Error: failed to derive INSERT_START_ID from INSERT_DATA_FILEPATH using inspect.py." >&2
+            if ! INSERT_START_ID="$(python3 npy_inspect.py "$INSERT_DATA_FILEPATH")"; then
+                echo "Error: failed to derive INSERT_START_ID from INSERT_DATA_FILEPATH using npy_inspect.py." >&2
                 exit 1
             fi
         else
@@ -311,19 +312,19 @@ if [[ "$TASK" == "MIXED" ]]; then
     MIXED_TIMELINE_ARGS=(
         mixed_timeline.py
         --log-dir "$RESULT_PATH"
-        --insert-vectors "$MIXED_DATA_FILEPATH"
-        --query-vectors "$QUERY_DATA_FILEPATH"
+        --insert-vectors "$MIXED_INSERT_DATA_FILEPATH"
+        --query-vectors "$MIXED_QUERY_DATA_FILEPATH"
         --metric "$MIXED_TIMELINE_METRIC"
         --insert-id-offset "$INSERT_START_ID"
     )
-    if [[ -n "$MIXED_CORPUS_SIZE" ]]; then
+    if [[ -n "$MIXED_INSERT_CORPUS_SIZE" ]]; then
         MIXED_TIMELINE_ARGS+=(
-            --insert-max-rows "$MIXED_CORPUS_SIZE"
+            --insert-max-rows "$MIXED_INSERT_CORPUS_SIZE"
         )
     fi
-    if [[ -n "$QUERY_CORPUS_SIZE" ]]; then
+    if [[ -n "$MIXED_QUERY_CORPUS_SIZE" ]]; then
         MIXED_TIMELINE_ARGS+=(
-            --query-max-rows "$QUERY_CORPUS_SIZE"
+            --query-max-rows "$MIXED_QUERY_CORPUS_SIZE"
         )
     fi
     if [[ -z "$RESTORE_DIR" ]]; then
@@ -333,6 +334,7 @@ if [[ "$TASK" == "MIXED" ]]; then
         if [[ -n "$INSERT_CORPUS_SIZE" ]]; then
             MIXED_TIMELINE_ARGS+=(
                 --init-max-rows "$INSERT_CORPUS_SIZE"
+                --throughput-only
             )
         fi
     fi

@@ -50,17 +50,9 @@ register_milvus_var "FLUSH_BEFORE_INDEX" "default" "TRUE" "TRUE FALSE" "Flush co
 register_milvus_var "QUERY_CLIENTS_PER_PROXY" "default" "1" "" "Query clients per proxy"
 
 # Mixed workload controls
-register_milvus_var "INSERT_MODE" "default" "max" "max rate MAX RATE" "Mixed insert pacing mode"
-register_milvus_var "INSERT_OPS_PER_SEC" "default" "" "" "Insert ops/sec when INSERT_MODE=rate"
-register_milvus_var "MIXED_INSERT_BATCH_SIZE" "default" "32" "" "Mixed insert batch size"
-register_milvus_var "QUERY_MODE" "default" "max" "max rate MAX RATE" "Mixed query pacing mode"
-register_milvus_var "QUERY_OPS_PER_SEC" "default" "" "" "Query ops/sec when QUERY_MODE=rate"
-register_milvus_var "MIXED_QUERY_BATCH_SIZE" "default" "32" "" "Mixed query batch size"
+register_milvus_var "INSERT_OPS_PER_SEC" "default" "" "" "Insert ops/sec when MIXED_INSERT_MODE=rate"
+register_milvus_var "QUERY_OPS_PER_SEC" "default" "" "" "Query ops/sec when MIXED_QUERY_MODE=rate"
 register_milvus_var "MIXED_RESULT_PATH" "default" "mixed_logs" "" "Output subdirectory for mixed workload logs"
-register_milvus_var "MIXED_CORPUS_SIZE" "default" "" "" "Mixed-workload corpus size; empty means use all rows in the file"
-register_milvus_var "MIXED_QUERY_CLIENTS_PER_PROXY" "default" "1" "" "Mixed query clients per proxy"
-register_milvus_var "MIXED_INSERT_CLIENTS_PER_PROXY" "default" "1" "" "Mixed insert clients per proxy"
-register_milvus_var "MIXED_DATA_FILEPATH" "default" "" "" "Mixed workload data file"
 
 # Optional request tuning
 register_milvus_var "VECTOR_FIELD" "default" "" "" "Optional vector field override"

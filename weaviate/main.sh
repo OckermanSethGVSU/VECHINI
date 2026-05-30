@@ -6,7 +6,7 @@ run_summary() {
 
 
 resolve_mixed_insert_start_id() {
-    if [[ "$TASK" != "MIXED" || -n "${INSERT_START_ID:-}" ]]; then
+    if [[ "$TASK" != "MIXED" || -n "${MIXED_INSERT_START_ID:-}" ]]; then
         return 0
     fi
 
@@ -151,7 +151,7 @@ NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="
 
 mkdir -p uploadNPY
 mv *.npy uploadNPY/
-touch ./runtime_state/insert_index_done.txt
+touch ./runtime_state/insert_index_done.event
 
 if [[ "$TASK" == "INSERT" || "$TASK" == "INDEX" ]]; then
         touch "runtime_state/flag.txt"
@@ -164,7 +164,7 @@ if [[ "$TASK" == "QUERY" ]]; then
     mkdir -p queryNPY
     mv *.npy queryNPY/
 
-    touch ./runtime_state/query_done.txt
+    touch ./runtime_state/query_done.event
     run_summary QUERY query
     touch "runtime_state/flag.txt"
 fi

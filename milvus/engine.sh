@@ -100,12 +100,12 @@ EOF
             fi
             ;;
         MIXED)
-            if [[ -z "${QUERY_DATA_FILEPATH:-}" ]]; then
-                echo "Milvus variable 'QUERY_DATA_FILEPATH' is required for TASK=MIXED." >&2
+            if [[ -z "${MIXED_QUERY_DATA_FILEPATH:-}" ]]; then
+                echo "Milvus variable 'MIXED_QUERY_DATA_FILEPATH' is required for TASK=MIXED." >&2
                 return 1
             fi
-            if [[ -z "${MIXED_DATA_FILEPATH:-}" ]]; then
-                echo "Milvus variable 'MIXED_DATA_FILEPATH' is required for TASK=MIXED." >&2
+            if [[ -z "${MIXED_INSERT_DATA_FILEPATH:-}" ]]; then
+                echo "Milvus variable 'MIXED_INSERT_DATA_FILEPATH' is required for TASK=MIXED." >&2
                 return 1
             fi
             ;;
@@ -132,8 +132,13 @@ engine_load_combo() {
     schema_load_combo_assignments "$1"
 
     NODES_CURRENT="$NODES"
-    QUERY_BATCH_CURRENT="$QUERY_BATCH_SIZE"
-    INSERT_BATCH_CURRENT="$INSERT_BATCH_SIZE"
+    if [[ "${TASK^^}" == "MIXED" ]]; then
+        QUERY_BATCH_CURRENT="$MIXED_QUERY_BATCH_SIZE"
+        INSERT_BATCH_CURRENT="$MIXED_INSERT_BATCH_SIZE"
+    else
+        QUERY_BATCH_CURRENT="$QUERY_BATCH_SIZE"
+        INSERT_BATCH_CURRENT="$INSERT_BATCH_SIZE"
+    fi
     CORES_CURRENT="$CORES"
     TOTAL_NODES=$((NODES_CURRENT + 1))
     JOB_NAME="${TASK,,}_${MODE,,}_${NODES_CURRENT}n_$(milvus_cores_label)c_q${QUERY_BATCH_CURRENT}"
@@ -222,8 +227,7 @@ engine_copy_payload() {
         if engine_needs_npy_inspect; then
             copy_engine_items "$ENGINE_DIR/utils" "$target_dir" "npy_inspect.py"
         fi
-        mkdir -p "$target_dir/configs"
-        copy_engine_items "$ENGINE_DIR/runtime/configs" "$target_dir/configs" "unified_milvus.yaml"
+        copy_engine_items "$ENGINE_DIR/runtime" "$target_dir" "configs"
 
         if [[ "$TASK" == "MIXED" ]]; then
             copy_engine_items "$ENGINE_DIR/clients/mixed" "$target_dir" \
@@ -275,6 +279,7 @@ engine_copy_payload() {
         if engine_needs_npy_inspect; then
             copy_engine_items "$ENGINE_DIR/utils" "$target_dir" "npy_inspect.py"
         fi
+        copy_engine_items "$ENGINE_DIR/runtime" "$target_dir" "configs"
 
         copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" \
             "batch_client"

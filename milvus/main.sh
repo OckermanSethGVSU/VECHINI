@@ -317,8 +317,10 @@ elif [[ "$MODE" == "DISTRIBUTED" ]]; then
 
     
     # setup ETCD/Minio info which all parts will need
-    cp -r ${BASE_DIR}/runtime/configs/ .
-    rm ./configs/milvus.yaml
+    if [[ ! -d ./configs ]]; then
+        cp -r "${BASE_DIR}/${MILVUS_CONFIG_DIR}/configs/" .
+    fi
+    rm -f ./configs/milvus.yaml
     python3 replace_unified.py --mode distributed
 
     # Launch coordinator nodes
@@ -425,8 +427,6 @@ if [[ "$TASK" == "MIXED" ]]; then
         export MIXED_RESULT_PATH="$MIXED_RESULT_PATH"
     fi
 
-    export MIXED_INSERT_BATCH_SIZE=${MIXED_INSERT_BATCH_SIZE:-$INSERT_BATCH_SIZE}
-    export MIXED_QUERY_BATCH_SIZE=${MIXED_QUERY_BATCH_SIZE:-$QUERY_BATCH_SIZE}
     export INSERT_START_ID=$INSERT_START_ID
     COLLECTION_NAME="${COLLECTION_NAME:-standalone}"
     VECTOR_FIELD="${VECTOR_FIELD:-vector}"
@@ -437,8 +437,8 @@ if [[ "$TASK" == "MIXED" ]]; then
     export MIXED_INSERT_BATCH_MAX=${MIXED_INSERT_BATCH_MAX:-$INSERT_BATCH_MAX}
     export MIXED_QUERY_BATCH_MIN=${MIXED_QUERY_BATCH_MIN:-$QUERY_BATCH_MIN}
     export MIXED_QUERY_BATCH_MAX=${MIXED_QUERY_BATCH_MAX:-$QUERY_BATCH_MAX}
-    export INSERT_CLIENTS=${MIXED_INSERT_CLIENTS_PER_PROXY:-$INSERT_CLIENTS_PER_PROXY}
-    export QUERY_CLIENTS=${MIXED_QUERY_CLIENTS_PER_PROXY:-$QUERY_CLIENTS_PER_PROXY}
+    export MIXED_INSERT_CLIENTS
+    export MIXED_QUERY_CLIENTS
     mkdir -p "$MIXED_RESULT_PATH"
 
     NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" ./mixed
@@ -453,16 +453,17 @@ if [[ "$TASK" == "MIXED" ]]; then
     MIXED_TIMELINE_ARGS=(
         mixed_timeline.py
         --log-dir "$MIXED_RESULT_PATH"
-        --insert-vectors "$MIXED_DATA_FILEPATH"
-        --query-vectors "$QUERY_DATA_FILEPATH"
+        --insert-vectors "$MIXED_INSERT_DATA_FILEPATH"
+        --query-vectors "$MIXED_QUERY_DATA_FILEPATH"
         --metric "$MIXED_TIMELINE_METRIC"
         --insert-id-offset "$INSERT_START_ID"
+        --throughput-only
     )
-    if [[ -n "$MIXED_CORPUS_SIZE" ]]; then
-        MIXED_TIMELINE_ARGS+=(--insert-max-rows "$MIXED_CORPUS_SIZE")
+    if [[ -n "$MIXED_INSERT_CORPUS_SIZE" ]]; then
+        MIXED_TIMELINE_ARGS+=(--insert-max-rows "$MIXED_INSERT_CORPUS_SIZE")
     fi
-    if [[ -n "$QUERY_CORPUS_SIZE" ]]; then
-        MIXED_TIMELINE_ARGS+=(--query-max-rows "$QUERY_CORPUS_SIZE")
+    if [[ -n "$MIXED_QUERY_CORPUS_SIZE" ]]; then
+        MIXED_TIMELINE_ARGS+=(--query-max-rows "$MIXED_QUERY_CORPUS_SIZE")
     fi
 
     if [[ -z "$RESTORE_DIR" ]]; then

@@ -80,7 +80,7 @@ def resolve_dynamic_threshold(shard_count: int) -> int:
 
         if task in ["INDEX", "QUERY", "MIXED"]:
             least_populated = least_populated_shard_size(total_objects, shard_count)
-            if shard_count == 1 and task in ["INDEX", "QUERY"]:
+            if shard_count == 1 and task in ["INDEX", "QUERY", "MIXED"]:
                 threshold = max(0, total_objects - 1)
                 print(
                     "Auto-derived HNSW_DYNAMIC_THRESHOLD={0} from total_objects={1} "

@@ -216,13 +216,13 @@ func parseFlags() (config, error) {
 	flag.Int64Var(&cfg.insertStartID, "insert-start-id", getenvInt64Default("MIXED_INSERT_START_ID", 0), "Starting ID offset for inserted vectors")
 	flag.IntVar(&cfg.insertCorpusSize, "insert-corpus-size", getenvIntDefault("MIXED_INSERT_CORPUS_SIZE", 0), "Rows to read from the insert matrix; 0 means all rows")
 	flag.IntVar(&cfg.insertClients, "insert-clients", getenvIntDefault("MIXED_INSERT_CLIENTS", 1), "Number of dedicated insert clients")
-	flag.IntVar(&cfg.insertBatch.fixed, "insert-batch-size", getenvIntDefault("MIXED_INSERT_BATCH_SIZE", getenvIntDefault("INSERT_BATCH_SIZE", 1)), "Fixed insert batch size")
+	flag.IntVar(&cfg.insertBatch.fixed, "insert-batch-size", getenvIntDefault("MIXED_INSERT_BATCH_SIZE", 1), "Fixed insert batch size")
 
 	flag.StringVar((*string)(&cfg.queryMode), "query-mode", getenvDefault("MIXED_QUERY_MODE", ""), "Per-role query mode override: max or rate")
 	flag.StringVar(&cfg.queryVectors, "query-vectors", getenvDefault("MIXED_QUERY_DATA_FILEPATH", ""), "Path to query vectors .npy")
 	flag.IntVar(&cfg.queryCorpusSize, "query-corpus-size", getenvIntDefault("MIXED_QUERY_CORPUS_SIZE", 0), "Rows to read from the query matrix; 0 means all rows")
 	flag.IntVar(&cfg.queryClients, "query-clients", getenvIntDefault("MIXED_QUERY_CLIENTS", 1), "Number of dedicated query clients")
-	flag.IntVar(&cfg.queryBatch.fixed, "query-batch-size", getenvIntDefault("MIXED_QUERY_BATCH_SIZE", getenvIntDefault("QUERY_BATCH_SIZE", 1)), "Fixed query batch size")
+	flag.IntVar(&cfg.queryBatch.fixed, "query-batch-size", getenvIntDefault("MIXED_QUERY_BATCH_SIZE", 1), "Fixed query batch size")
 
 	flag.IntVar(&cfg.topK, "top-k", getenvIntDefault("TOP_K", 10), "Top-k results per query vector")
 	flag.IntVar(&cfg.ef, "ef", getenvIntDefault("HNSW_EF_SEARCH", getenvIntDefault("EFSearch", 64)), "Search ef parameter")

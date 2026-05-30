@@ -25,6 +25,8 @@ register_qdrant_var "LOG_LEVEL" "default" "ERROR" "ERROR DEBUG INFO" "Qdrant log
 # Index
 register_qdrant_var "HNSW_M" "default" "16" "" "HNSW M parameter"
 register_qdrant_var "HNSW_EF_CONSTRUCTION" "default" "100" "" "HNSW efConstruction parameter"
+register_qdrant_var "MAX_SEGMENT_SIZE" "default" "" "" "Optional Qdrant max segment size in KB; only applied when set"
+register_qdrant_var "DEFAULT_SEGMENT_NUMBER" "default" "" "" "Optional Qdrant default segment count; only applied when set"
 register_qdrant_var "GPU_INDEX" "default" "False" "True False" "Whether to use GPU indexing"
 
 
@@ -32,19 +34,13 @@ register_qdrant_var "GPU_INDEX" "default" "False" "True False" "Whether to use G
 register_qdrant_var "INSERT_CLIENTS_PER_WORKER" "default" "1" "" "Insert clients per worker"
 
 # Query workload
-register_qdrant_var "TOTAL_QUERY_CLIENTS" "conditional" "1" "" "Total query clients across the run" "TASK=QUERY|MIXED"
-register_qdrant_var "QUERY_CLIENTS_PER_WORKER" "conditional" "1" "" "Query clients per worker" "TASK=QUERY|MIXED"
+register_qdrant_var "TOTAL_QUERY_CLIENTS" "default" "" "" "Optional total query clients across the run"
+register_qdrant_var "QUERY_CLIENTS_PER_WORKER" "conditional" "1" "" "Query clients per worker" "TASK=QUERY"
 register_qdrant_var "HNSW_EF_SEARCH" "default" "64" "" "Query efSearch override"
 
 # Mixed workload controls
-register_qdrant_var "MIXED_DATA_FILEPATH" "conditional" "" "" "Mixed workload data file" "TASK=MIXED"
-register_qdrant_var "MIXED_CORPUS_SIZE" "conditional" "1000" "" "Mixed-workload corpus size" "TASK=MIXED"
-register_qdrant_var "INSERT_MODE" "default" "MAX" "MAX RATE" "Mixed insert pacing mode"
-register_qdrant_var "INSERT_OPS_PER_SEC" "conditional" "" "" "Required when INSERT_MODE=RATE" "INSERT_MODE=RATE"
-register_qdrant_var "QUERY_MODE" "default" "MAX" "MAX RATE" "Mixed query pacing mode"
-register_qdrant_var "QUERY_OPS_PER_SEC" "conditional" "" "" "Required when QUERY_MODE=RATE" "QUERY_MODE=RATE"
-register_qdrant_var "MIXED_INSERT_CLIENTS_PER_WORKER" "conditional" "1" "" "Mixed insert clients per worker" "TASK=MIXED"
-register_qdrant_var "MIXED_QUERY_CLIENTS_PER_WORKER" "conditional" "1" "" "Mixed query clients per worker" "TASK=MIXED"
+register_qdrant_var "INSERT_OPS_PER_SEC" "conditional" "" "" "Required when MIXED_INSERT_MODE=RATE" "MIXED_INSERT_MODE=RATE"
+register_qdrant_var "QUERY_OPS_PER_SEC" "conditional" "" "" "Required when MIXED_QUERY_MODE=RATE" "MIXED_QUERY_MODE=RATE"
 register_qdrant_var "RESULT_PATH" "default" "mixed_logs" "" "Output subdirectory for mixed workload logs"
 
 register_qdrant_var "INSERT_BATCH_MIN" "default" "" "" "Optional randomized insert batch lower bound"

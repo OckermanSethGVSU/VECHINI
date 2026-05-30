@@ -37,28 +37,28 @@ const (
 
 type config struct {
 	// Connection, schema, and input/output paths.
-	milvusAddress     string
-	milvusToken       string
-	collectionName    string
-	vectorField       string
-	idField           string
-	insertStartID     int64
-	outputDir         string
-	insertVectors     string
-	queryVectors      string
-	insertCorpusSize  int
-	queryCorpusSize   int
-	insertClients     int
-	queryClients      int
-	topK              int
-	ef                int
-	mode              runMode
-	insertMode        runMode
-	queryMode         runMode
-	insertOpsPerSec   float64
-	queryOpsPerSec    float64
-	rpcTimeout        time.Duration
-	dryRun            bool
+	milvusAddress    string
+	milvusToken      string
+	collectionName   string
+	vectorField      string
+	idField          string
+	insertStartID    int64
+	outputDir        string
+	insertVectors    string
+	queryVectors     string
+	insertCorpusSize int
+	queryCorpusSize  int
+	insertClients    int
+	queryClients     int
+	topK             int
+	ef               int
+	mode             runMode
+	insertMode       runMode
+	queryMode        runMode
+	insertOpsPerSec  float64
+	queryOpsPerSec   float64
+	rpcTimeout       time.Duration
+	dryRun           bool
 
 	// Batch behavior is configured separately for inserts and queries.
 	insertBatch batchConfig
@@ -225,25 +225,25 @@ func parseFlags() (config, error) {
 	flag.StringVar(&cfg.vectorField, "vector-field", getenvDefault("VECTOR_FIELD", "vector"), "Vector field name")
 	flag.StringVar(&cfg.idField, "id-field", getenvDefault("ID_FIELD", "id"), "Primary key field name")
 	flag.Int64Var(&cfg.insertStartID, "insert-start-id", getenvInt64Default("INSERT_START_ID", 0), "Starting ID offset for inserted vectors")
-	flag.StringVar(&cfg.insertVectors, "insert-vectors", getenvDefault("MIXED_DATA_FILEPATH", ""), "Path to insert vectors .npy")
-	flag.StringVar(&cfg.queryVectors, "query-vectors", getenvDefault("QUERY_DATA_FILEPATH", ""), "Path to query vectors .npy")
+	flag.StringVar(&cfg.insertVectors, "insert-vectors", getenvDefault("MIXED_INSERT_DATA_FILEPATH", ""), "Path to insert vectors .npy")
+	flag.StringVar(&cfg.queryVectors, "query-vectors", getenvDefault("MIXED_QUERY_DATA_FILEPATH", ""), "Path to query vectors .npy")
 	flag.StringVar(&cfg.outputDir, "output-dir", getenvDefault("MIXED_RESULT_PATH", getenvDefault("RESULT_PATH", "")), "Directory for per-client JSONL logs")
-	flag.IntVar(&cfg.insertCorpusSize, "insert-corpus-size", getenvIntDefault("MIXED_CORPUS_SIZE", getenvIntDefault("INSERT_CORPUS_SIZE", 0)), "Rows to read from the mixed insert matrix; 0 means all rows")
-	flag.IntVar(&cfg.queryCorpusSize, "query-corpus-size", getenvIntDefault("QUERY_CORPUS_SIZE", 0), "Rows to read from the query matrix; 0 means all rows")
+	flag.IntVar(&cfg.insertCorpusSize, "insert-corpus-size", getenvIntDefault("MIXED_INSERT_CORPUS_SIZE", 0), "Rows to read from the mixed insert matrix; 0 means all rows")
+	flag.IntVar(&cfg.queryCorpusSize, "query-corpus-size", getenvIntDefault("MIXED_QUERY_CORPUS_SIZE", 0), "Rows to read from the query matrix; 0 means all rows")
 	flag.IntVar(&cfg.insertClients, "insert-clients", getenvIntDefault("MIXED_INSERT_CLIENTS", 1), "Number of dedicated insert clients")
 	flag.IntVar(&cfg.queryClients, "query-clients", getenvIntDefault("MIXED_QUERY_CLIENTS", 1), "Number of dedicated query clients")
 	flag.IntVar(&cfg.topK, "top-k", getenvIntDefault("TOP_K", 10), "Top-k results per query vector")
 	flag.IntVar(&cfg.ef, "ef", getenvIntDefault("EFSearch", 64), "Search ef parameter")
 	flag.StringVar(&mode, "mode", string(modeMax), "Execution mode: max or rate")
-	flag.StringVar((*string)(&cfg.insertMode), "insert-mode", getenvDefault("INSERT_MODE", ""), "Per-role insert mode override: max or rate")
-	flag.StringVar((*string)(&cfg.queryMode), "query-mode", getenvDefault("QUERY_MODE", ""), "Per-role query mode override: max or rate")
+	flag.StringVar((*string)(&cfg.insertMode), "insert-mode", getenvDefault("MIXED_INSERT_MODE", ""), "Per-role insert mode override: max or rate")
+	flag.StringVar((*string)(&cfg.queryMode), "query-mode", getenvDefault("MIXED_QUERY_MODE", ""), "Per-role query mode override: max or rate")
 	flag.Float64Var(&cfg.insertOpsPerSec, "insert-ops-per-sec", getenvFloatDefault("INSERT_OPS_PER_SEC", 0), "Direct insert ops/sec cap across all insert clients")
 	flag.Float64Var(&cfg.queryOpsPerSec, "query-ops-per-sec", getenvFloatDefault("QUERY_OPS_PER_SEC", 0), "Direct query ops/sec cap across all query clients")
 	flag.DurationVar(&cfg.rpcTimeout, "rpc-timeout", getenvDurationDefault("RPC_TIMEOUT", 10*time.Minute), "Per-operation timeout")
 	flag.BoolVar(&cfg.dryRun, "dry-run", getenvBoolDefault("DRY_RUN", false), "Use an in-memory backend instead of Milvus")
 
-	flag.IntVar(&cfg.insertBatch.fixed, "insert-batch-size", getenvIntDefault("MIXED_INSERT_BATCH_SIZE", getenvIntDefault("INSERT_BATCH_SIZE", 1)), "Fixed insert batch size")
-	flag.IntVar(&cfg.queryBatch.fixed, "query-batch-size", getenvIntDefault("MIXED_QUERY_BATCH_SIZE", getenvIntDefault("QUERY_BATCH_SIZE", 1)), "Fixed query batch size")
+	flag.IntVar(&cfg.insertBatch.fixed, "insert-batch-size", getenvIntDefault("MIXED_INSERT_BATCH_SIZE", 1), "Fixed insert batch size")
+	flag.IntVar(&cfg.queryBatch.fixed, "query-batch-size", getenvIntDefault("MIXED_QUERY_BATCH_SIZE", 1), "Fixed query batch size")
 	flag.IntVar(&cfg.insertBatch.min, "insert-batch-min", getenvIntDefault("MIXED_INSERT_BATCH_MIN", getenvIntDefault("INSERT_BATCH_MIN", 0)), "Random insert batch min, inclusive")
 	flag.IntVar(&cfg.insertBatch.max, "insert-batch-max", getenvIntDefault("MIXED_INSERT_BATCH_MAX", getenvIntDefault("INSERT_BATCH_MAX", 0)), "Random insert batch max, inclusive")
 	flag.IntVar(&cfg.queryBatch.min, "query-batch-min", getenvIntDefault("MIXED_QUERY_BATCH_MIN", getenvIntDefault("QUERY_BATCH_MIN", 0)), "Random query batch min, inclusive")

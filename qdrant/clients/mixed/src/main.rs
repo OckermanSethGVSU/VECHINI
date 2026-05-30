@@ -136,10 +136,20 @@ async fn main() -> Result<()> {
     fs::create_dir_all(&cfg.output_dir)
         .with_context(|| format!("create output dir {}", cfg.output_dir.display()))?;
 
-    let insert_data = load_matrix(&cfg.insert.vectors_path, cfg.insert.corpus_size)
-        .with_context(|| format!("load insert vectors from {}", cfg.insert.vectors_path.display()))?;
-    let query_data = load_matrix(&cfg.query.vectors_path, cfg.query.corpus_size)
-        .with_context(|| format!("load query vectors from {}", cfg.query.vectors_path.display()))?;
+    let insert_data =
+        load_matrix(&cfg.insert.vectors_path, cfg.insert.corpus_size).with_context(|| {
+            format!(
+                "load insert vectors from {}",
+                cfg.insert.vectors_path.display()
+            )
+        })?;
+    let query_data =
+        load_matrix(&cfg.query.vectors_path, cfg.query.corpus_size).with_context(|| {
+            format!(
+                "load query vectors from {}",
+                cfg.query.vectors_path.display()
+            )
+        })?;
 
     if insert_data.dim != query_data.dim {
         bail!(
@@ -153,7 +163,11 @@ async fn main() -> Result<()> {
 }
 
 // Spawn all insert/query workers behind one shared barrier so issue timing starts together.
-async fn run_workload(cfg: Arc<Config>, insert_data: MatrixData, query_data: MatrixData) -> Result<()> {
+async fn run_workload(
+    cfg: Arc<Config>,
+    insert_data: MatrixData,
+    query_data: MatrixData,
+) -> Result<()> {
     let total_clients = cfg.insert.clients + cfg.query.clients;
     if total_clients == 0 {
         bail!("at least one insert or query client is required");
@@ -221,7 +235,9 @@ async fn run_insert_client(
     // Hold until every insert/query worker has finished setup so the workload starts together.
     barrier.wait().await;
 
-    let view = data.data.slice(s![assignment.start_row..assignment.end_row, ..]);
+    let view = data
+        .data
+        .slice(s![assignment.start_row..assignment.end_row, ..]);
     let mut row = 0usize;
     let mut op_index = 0usize;
     while row < view.len_of(Axis(0)) {
@@ -339,7 +355,9 @@ async fn run_query_client(
     // Hold until every insert/query worker has finished setup so the workload starts together.
     barrier.wait().await;
 
-    let view = data.data.slice(s![assignment.start_row..assignment.end_row, ..]);
+    let view = data
+        .data
+        .slice(s![assignment.start_row..assignment.end_row, ..]);
     let mut row = 0usize;
     let mut op_index = 0usize;
     while row < view.len_of(Axis(0)) {
@@ -348,7 +366,8 @@ async fn run_query_client(
 
         let batch_view = view.slice(s![row..row + batch_size, ..]);
         let global_start_row = assignment.start_row + row;
-        let query_row_indices = (global_start_row..global_start_row + batch_size).collect::<Vec<_>>();
+        let query_row_indices =
+            (global_start_row..global_start_row + batch_size).collect::<Vec<_>>();
 
         // Build one nearest-neighbor query per row in this batch so the JSON log can map results back to source rows.
         let queries = batch_view
@@ -376,7 +395,11 @@ async fn run_query_client(
                     .into_iter()
                     .map(|set| {
                         let ids = set.result.iter().map(extract_point_id).collect::<Vec<_>>();
-                        let scores = set.result.iter().map(|point| point.score).collect::<Vec<_>>();
+                        let scores = set
+                            .result
+                            .iter()
+                            .map(|point| point.score)
+                            .collect::<Vec<_>>();
                         (ids, scores)
                     })
                     .unzip();
@@ -452,60 +475,54 @@ async fn run_query_client(
 // Merge CLI overrides with the existing environment-variable conventions used by the Qdrant scripts.
 fn parse_config() -> Result<Config> {
     let args = parse_args()?;
-    let mode = parse_mode(value_with_args(&args, "mode", &["MODE"]).unwrap_or_else(|| "max".to_string()))?;
-    let insert_mode = parse_mode(value_with_args(&args, "insert-mode", &["INSERT_MODE"]).unwrap_or_else(|| match mode {
-        RunMode::Max => "max".to_string(),
-        RunMode::Rate => "rate".to_string(),
-    }))?;
-    let query_mode = parse_mode(value_with_args(&args, "query-mode", &["QUERY_MODE"]).unwrap_or_else(|| match mode {
-        RunMode::Max => "max".to_string(),
-        RunMode::Rate => "rate".to_string(),
-    }))?;
+    let mode =
+        parse_mode(value_with_args(&args, "mode", &["MODE"]).unwrap_or_else(|| "max".to_string()))?;
+    let insert_mode = parse_mode(
+        value_with_args(&args, "insert-mode", &["MIXED_INSERT_MODE"]).unwrap_or_else(
+            || match mode {
+                RunMode::Max => "max".to_string(),
+                RunMode::Rate => "rate".to_string(),
+            },
+        ),
+    )?;
+    let query_mode = parse_mode(
+        value_with_args(&args, "query-mode", &["MIXED_QUERY_MODE"]).unwrap_or_else(|| match mode {
+            RunMode::Max => "max".to_string(),
+            RunMode::Rate => "rate".to_string(),
+        }),
+    )?;
 
     let n_workers = optional_usize(value_with_args(&args, "n-workers", &["N_WORKERS"]))?;
-    let insert_clients_per_worker =
-        optional_usize(value_with_args(
-            &args,
-            "insert-clients-per-worker",
-            &["MIXED_INSERT_CLIENTS_PER_WORKER", "INSERT_CLIENTS_PER_WORKER"],
-        ))?;
-    let query_clients_per_worker =
-        optional_usize(value_with_args(
-            &args,
-            "query-clients-per-worker",
-            &["MIXED_QUERY_CLIENTS_PER_WORKER", "QUERY_CLIENTS_PER_WORKER"],
-        ))?;
-
-    let insert_clients = resolve_client_count(
-        value_with_args(&args, "insert-clients", &["INSERT_CLIENTS"]),
-        n_workers,
-        insert_clients_per_worker,
-        "insert",
-    )?;
-    let query_clients = resolve_client_count(
-        value_with_args(&args, "query-clients", &["QUERY_CLIENTS"]),
-        n_workers,
-        query_clients_per_worker,
-        "query",
-    )?;
+    let insert_clients = optional_usize(value_with_args(
+        &args,
+        "insert-clients",
+        &["MIXED_INSERT_CLIENTS"],
+    ))?
+    .unwrap_or(1);
+    let query_clients = optional_usize(value_with_args(
+        &args,
+        "query-clients",
+        &["MIXED_QUERY_CLIENTS"],
+    ))?
+    .unwrap_or(1);
 
     let insert = RoleConfig {
         clients: insert_clients,
-        clients_per_worker: insert_clients_per_worker,
+        clients_per_worker: None,
         corpus_size: optional_usize(value_with_args(
             &args,
             "insert-corpus-size",
-            &["MIXED_CORPUS_SIZE"],
+            &["MIXED_INSERT_CORPUS_SIZE"],
         ))?,
         vectors_path: PathBuf::from(required_string(value_with_args(
             &args,
             "insert-vectors",
-            &["MIXED_DATA_FILEPATH"],
+            &["MIXED_INSERT_DATA_FILEPATH"],
         ))?),
         batch: parse_batch_config(
             &args,
             "insert",
-            &["INSERT_BATCH_SIZE"],
+            &["MIXED_INSERT_BATCH_SIZE"],
             &["INSERT_BATCH_MIN"],
             &["INSERT_BATCH_MAX"],
         )?,
@@ -526,21 +543,21 @@ fn parse_config() -> Result<Config> {
 
     let query = RoleConfig {
         clients: query_clients,
-        clients_per_worker: query_clients_per_worker,
+        clients_per_worker: None,
         corpus_size: optional_usize(value_with_args(
             &args,
             "query-corpus-size",
-            &["QUERY_CORPUS_SIZE", "QUERY_SET_SIZE"],
+            &["MIXED_QUERY_CORPUS_SIZE"],
         ))?,
         vectors_path: PathBuf::from(required_string(value_with_args(
             &args,
             "query-vectors",
-            &["QUERY_DATA_FILEPATH", "QUERY_FILEPATH"],
+            &["MIXED_QUERY_DATA_FILEPATH"],
         ))?),
         batch: parse_batch_config(
             &args,
             "query",
-            &["QUERY_BATCH_SIZE"],
+            &["MIXED_QUERY_BATCH_SIZE"],
             &["QUERY_BATCH_MIN"],
             &["QUERY_BATCH_MAX"],
         )?,
@@ -585,12 +602,8 @@ fn parse_config() -> Result<Config> {
             &["QUERY_EF_SEARCH", "EF_SEARCH"],
         ))?
         .unwrap_or(64),
-        rpc_timeout: optional_duration(value_with_args(
-            &args,
-            "rpc-timeout",
-            &["RPC_TIMEOUT"],
-        ))?
-        .unwrap_or_else(|| Duration::from_secs(600)),
+        rpc_timeout: optional_duration(value_with_args(&args, "rpc-timeout", &["RPC_TIMEOUT"]))?
+            .unwrap_or_else(|| Duration::from_secs(600)),
         qdrant_url: value_with_args(&args, "qdrant-url", &["QDRANT_URL"]),
         registry_path: PathBuf::from(
             value_with_args(&args, "registry-path", &["QDRANT_REGISTRY_PATH"])
@@ -607,7 +620,11 @@ fn validate_role_config(role: Role, cfg: &RoleConfig) -> Result<()> {
     }
     if let Some(corpus_size) = cfg.corpus_size {
         if corpus_size == 0 {
-            bail!("{}-corpus-size must be positive when {} clients are configured", role.as_str(), role.as_str());
+            bail!(
+                "{}-corpus-size must be positive when {} clients are configured",
+                role.as_str(),
+                role.as_str()
+            );
         }
     }
     validate_batch_config(role, &cfg.batch)?;
@@ -615,7 +632,11 @@ fn validate_role_config(role: Role, cfg: &RoleConfig) -> Result<()> {
         RunMode::Max => {}
         RunMode::Rate => {
             if cfg.ops_per_sec <= 0.0 {
-                bail!("{}-ops-per-sec must be positive when {}-mode=rate", role.as_str(), role.as_str());
+                bail!(
+                    "{}-ops-per-sec must be positive when {}-mode=rate",
+                    role.as_str(),
+                    role.as_str()
+                );
             }
         }
     }
@@ -637,7 +658,10 @@ fn validate_batch_config(role: Role, cfg: &BatchConfig) -> Result<()> {
             }
             Ok(())
         }
-        _ => bail!("{} batch min/max must both be set or both be unset", role.as_str()),
+        _ => bail!(
+            "{} batch min/max must both be set or both be unset",
+            role.as_str()
+        ),
     }
 }
 
@@ -694,7 +718,10 @@ fn split_range(total: usize, parts: usize, idx: usize) -> (usize, usize) {
 
 // Use the owned row span as a cheap upper bound for buffered operation records.
 fn record_capacity(assignment: Assignment) -> usize {
-    assignment.end_row.saturating_sub(assignment.start_row).max(1)
+    assignment
+        .end_row
+        .saturating_sub(assignment.start_row)
+        .max(1)
 }
 
 // Persist one worker's buffered timeline only at worker completion or failure to minimize measurement overhead.
@@ -727,11 +754,21 @@ fn resolve_qdrant_url(cfg: &Config, role: Role, client_id: usize) -> Result<Stri
     let strategy = role_cfg.balance_strategy.trim();
     let target = match strategy {
         "NO_BALANCE" => 0,
-        "WORKER_BALANCE" => target_worker_id(cfg.n_workers, role_cfg.clients_per_worker, role_cfg.clients, client_id)?,
+        "WORKER_BALANCE" => target_worker_id(
+            cfg.n_workers,
+            role_cfg.clients_per_worker,
+            role_cfg.clients,
+            client_id,
+        )?,
         other => bail!("unsupported {} balance strategy {}", role.as_str(), other),
     };
-    let endpoint = read_endpoint_line(&cfg.registry_path, target + 1)?
-        .with_context(|| format!("{} missing line {}", cfg.registry_path.display(), target + 1))?;
+    let endpoint = read_endpoint_line(&cfg.registry_path, target + 1)?.with_context(|| {
+        format!(
+            "{} missing line {}",
+            cfg.registry_path.display(),
+            target + 1
+        )
+    })?;
     Ok(format!("http://{}:{}", endpoint.ip, endpoint.port - 1))
 }
 
@@ -916,10 +953,18 @@ fn parse_args() -> Result<HashMap<String, String>> {
 }
 
 // CLI wins over environment variables; otherwise use the first non-empty env value in the fallback list.
-fn value_with_args(args: &HashMap<String, String>, arg_name: &str, env_names: &[&str]) -> Option<String> {
+fn value_with_args(
+    args: &HashMap<String, String>,
+    arg_name: &str,
+    env_names: &[&str],
+) -> Option<String> {
     args.get(arg_name)
         .cloned()
-        .or_else(|| env_names.iter().find_map(|name| env::var(name).ok().map(|v| v.trim().to_string())))
+        .or_else(|| {
+            env_names
+                .iter()
+                .find_map(|name| env::var(name).ok().map(|v| v.trim().to_string()))
+        })
         .filter(|v| !v.is_empty())
 }
 
@@ -931,29 +976,23 @@ fn parse_batch_config(
     min_envs: &[&str],
     max_envs: &[&str],
 ) -> Result<BatchConfig> {
-    let fixed = optional_usize(value_with_args(args, &format!("{role_name}-batch-size"), fixed_envs))?.unwrap_or(1);
-    let min = optional_usize(value_with_args(args, &format!("{role_name}-batch-min"), min_envs))?;
-    let max = optional_usize(value_with_args(args, &format!("{role_name}-batch-max"), max_envs))?;
+    let fixed = optional_usize(value_with_args(
+        args,
+        &format!("{role_name}-batch-size"),
+        fixed_envs,
+    ))?
+    .unwrap_or(1);
+    let min = optional_usize(value_with_args(
+        args,
+        &format!("{role_name}-batch-min"),
+        min_envs,
+    ))?;
+    let max = optional_usize(value_with_args(
+        args,
+        &format!("{role_name}-batch-max"),
+        max_envs,
+    ))?;
     Ok(BatchConfig { fixed, min, max })
-}
-
-// Accept either an explicit total client count or derive it from N_WORKERS * CLIENTS_PER_WORKER.
-fn resolve_client_count(
-    explicit: Option<String>,
-    n_workers: Option<usize>,
-    clients_per_worker: Option<usize>,
-    label: &str,
-) -> Result<usize> {
-    if let Some(raw) = explicit {
-        return raw
-            .parse::<usize>()
-            .with_context(|| format!("{label}-clients must be a valid integer"));
-    }
-    match (n_workers, clients_per_worker) {
-        (_, Some(0)) => bail!("{label}-clients-per-worker must be positive"),
-        (Some(workers), Some(per_worker)) => Ok(workers * per_worker),
-        _ => Ok(0),
-    }
 }
 
 fn required_string(value: Option<String>) -> Result<String> {

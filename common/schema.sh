@@ -42,6 +42,17 @@ register_common_var "QUERY_BALANCE_STRATEGY" "conditional" "NO_BALANCE" "NO_BALA
 register_common_var "QUERY_STREAMING" "default" "False" "True False" "Enable query streaming behavior"
 register_common_var "TOP_K" "default" "10" "" "Optional top-k override"
 
+# MIXED variables
+register_common_var "MIXED_INSERT_DATA_FILEPATH" "conditional" "" "" "Mixed insert corpus file path" "TASK=MIXED"
+register_common_var "MIXED_QUERY_DATA_FILEPATH" "conditional" "" "" "Mixed query vector file path" "TASK=MIXED"
+register_common_var "MIXED_INSERT_MODE" "default" "MAX" "MAX RATE max rate" "Mixed insert pacing mode"
+register_common_var "MIXED_QUERY_MODE" "default" "MAX" "MAX RATE max rate" "Mixed query pacing mode"
+register_common_var "MIXED_INSERT_BATCH_SIZE" "default" "32" "" "Mixed insert batch size"
+register_common_var "MIXED_QUERY_BATCH_SIZE" "default" "32" "" "Mixed query batch size"
+register_common_var "MIXED_INSERT_CORPUS_SIZE" "default" "" "" "Mixed insert corpus size; empty means use all rows in the file"
+register_common_var "MIXED_QUERY_CORPUS_SIZE" "default" "" "" "Mixed query corpus size; empty means use all rows in the file"
+register_common_var "MIXED_INSERT_CLIENTS" "default" "1" "" "Mixed insert clients"
+register_common_var "MIXED_QUERY_CLIENTS" "default" "1" "" "Mixed query clients"
 
 # Path variables
 register_common_var "BASE_DIR" "default" "" "" "Base directory containing generated run directories; auto-filled by the submit manager when empty"

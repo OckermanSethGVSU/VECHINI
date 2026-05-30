@@ -119,8 +119,13 @@ engine_load_combo() {
 
     NODES_CURRENT="$NODES"
     WORKERS_PER_NODE_CURRENT="$WORKERS_PER_NODE"
-    QUERY_BATCH_CURRENT="$QUERY_BATCH_SIZE"
-    INSERT_BATCH_CURRENT="$INSERT_BATCH_SIZE"
+    if [[ "${TASK^^}" == "MIXED" ]]; then
+        QUERY_BATCH_CURRENT="$MIXED_QUERY_BATCH_SIZE"
+        INSERT_BATCH_CURRENT="$MIXED_INSERT_BATCH_SIZE"
+    else
+        QUERY_BATCH_CURRENT="$QUERY_BATCH_SIZE"
+        INSERT_BATCH_CURRENT="$INSERT_BATCH_SIZE"
+    fi
     CORES_CURRENT="$CORES"
     TOTAL_NODES=$((NODES_CURRENT + 1))
     JOB_NAME="${TASK,,}_${NODES_CURRENT}n_${WORKERS_PER_NODE_CURRENT}w_$(qdrant_cores_label)c_q${QUERY_BATCH_CURRENT}"
@@ -215,6 +220,6 @@ engine_copy_payload() {
 
     if [[ "$TASK" == "MIXED" ]]; then
         copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "mixed_timeline.py"
-        copy_engine_items "$ENGINE_DIR/utils" "$target_dir" "inspect.py"
+        copy_engine_items "$ENGINE_DIR/utils" "$target_dir" "npy_inspect.py"
     fi
 }

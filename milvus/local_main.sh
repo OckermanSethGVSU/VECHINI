@@ -953,18 +953,16 @@ run_query() {
 run_mixed() {
     export ACTIVE_TASK="MIXED"
     : "${INSERT_DATA_FILEPATH:?INSERT_DATA_FILEPATH is required}"
-    : "${QUERY_DATA_FILEPATH:?QUERY_DATA_FILEPATH is required}"
-    : "${INSERT_BATCH_SIZE:?INSERT_BATCH_SIZE is required}"
-    : "${QUERY_BATCH_SIZE:?QUERY_BATCH_SIZE is required}"
+    : "${MIXED_INSERT_BATCH_SIZE:?MIXED_INSERT_BATCH_SIZE is required}"
+    : "${MIXED_QUERY_BATCH_SIZE:?MIXED_QUERY_BATCH_SIZE is required}"
     : "${INSERT_BALANCE_STRATEGY:?INSERT_BALANCE_STRATEGY is required}"
     : "${QUERY_BALANCE_STRATEGY:?QUERY_BALANCE_STRATEGY is required}"
-    : "${MIXED_DATA_FILEPATH:?MIXED_DATA_FILEPATH is required}"
+    : "${MIXED_QUERY_DATA_FILEPATH:?MIXED_QUERY_DATA_FILEPATH is required}"
+    : "${MIXED_INSERT_DATA_FILEPATH:?MIXED_INSERT_DATA_FILEPATH is required}"
     : "${INSERT_START_ID:?INSERT_START_ID is required}"
     MIXED_RESULT_PATH="${MIXED_RESULT_PATH:-mixed_logs}"
-    INSERT_CLIENTS="${MIXED_INSERT_CLIENTS_PER_PROXY:-$INSERT_CLIENTS_PER_PROXY}"
-    QUERY_CLIENTS="${MIXED_QUERY_CLIENTS_PER_PROXY:-$QUERY_CLIENTS_PER_PROXY}"
     EFSearch="${EFSearch:-$QUERY_EF_SEARCH}"
-    export MIXED_RESULT_PATH INSERT_CLIENTS QUERY_CLIENTS EFSearch
+    export MIXED_RESULT_PATH MIXED_INSERT_CLIENTS MIXED_QUERY_CLIENTS EFSearch
 
     mkdir -p "$MIXED_RESULT_PATH"
     env "${PYTHON_ENV_VARS[@]}" "$MIXED_BINARY_PATH"
@@ -981,16 +979,16 @@ run_mixed_timeline() {
     local mixed_timeline_args=(
         ./mixed_timeline.py
         --log-dir "$MIXED_RESULT_PATH"
-        --insert-vectors "$MIXED_DATA_FILEPATH"
-        --query-vectors "$QUERY_DATA_FILEPATH"
+        --insert-vectors "$MIXED_INSERT_DATA_FILEPATH"
+        --query-vectors "$MIXED_QUERY_DATA_FILEPATH"
         --metric "$mixed_timeline_metric"
         --insert-id-offset "$INSERT_START_ID"
     )
-    if [[ -n "$MIXED_CORPUS_SIZE" ]]; then
-        mixed_timeline_args+=(--insert-max-rows "$MIXED_CORPUS_SIZE")
+    if [[ -n "$MIXED_INSERT_CORPUS_SIZE" ]]; then
+        mixed_timeline_args+=(--insert-max-rows "$MIXED_INSERT_CORPUS_SIZE")
     fi
-    if [[ -n "$QUERY_CORPUS_SIZE" ]]; then
-        mixed_timeline_args+=(--query-max-rows "$QUERY_CORPUS_SIZE")
+    if [[ -n "$MIXED_QUERY_CORPUS_SIZE" ]]; then
+        mixed_timeline_args+=(--query-max-rows "$MIXED_QUERY_CORPUS_SIZE")
     fi
 
     if [[ -z "$RESTORE_DIR" ]]; then

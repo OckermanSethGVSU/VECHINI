@@ -9,7 +9,7 @@ run_summary() {
 
 
 resolve_mixed_insert_start_id() {
-    if [[ "$TASK" != "MIXED" || -n "${INSERT_START_ID:-}" ]]; then
+    if [[ "$TASK" != "MIXED" || -n "${MIXED_INSERT_START_ID:-}" ]]; then
         return 0
     fi
 

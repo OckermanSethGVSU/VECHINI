@@ -25,6 +25,8 @@ register_weaviate_var "GPU_INDEX" "default" "false" "true false" "Whether to use
 register_weaviate_var "ASYNC_INDEXING" "default" "true" "true false" "Enable Weaviate async indexing"
 register_weaviate_var "INDEX_TYPE" "default" "DYNAMIC" "DYNAMIC HNSW" "Vector index type for collection creation; DYNAMIC uses flat-to-HNSW conversion and HNSW creates a plain HNSW index"
 register_weaviate_var "GRPC_MAX_MESSAGE_SIZE" "default" "" "" "Optional Weaviate gRPC max message size in bytes passed to the server container"
+register_weaviate_var "RAFT_TIMEOUTS_MULTIPLIER" "default" "" "" "Optional multiplier for Weaviate Raft consensus timeouts and memberlist TCP timeouts"
+register_weaviate_var "MINIMUM_INTERNAL_TIMEOUT" "default" "" "" "Optional minimum internal timeout passed to the Weaviate server container"
 register_weaviate_var "DISABLE_LAZY_LOAD_SHARDS" "default" "true" "true false" "Disable Weaviate lazy shard loading"
 register_weaviate_var "HNSW_STARTUP_WAIT_FOR_VECTOR_CACHE" "default" "true" "true false" "Wait for HNSW vector cache at startup"
 register_weaviate_var "SHARD_COUNT" "default" "0" "" "Explicit shard count for collection creation; 0 derives the shard count from TOTAL"
@@ -43,14 +45,3 @@ register_weaviate_var "HNSW_EF_SEARCH" "default" "64" "" "HNSW ef parameter used
 register_weaviate_var "QUERY_CLIENTS_PER_WORKER" "default" "1" "" "Query clients per worker rank"
 register_weaviate_var "TOTAL_QUERY_CLIENTS" "default" "" "" "Optional total query clients across the run; when set, query clients are packed across workers using QUERY_CLIENTS_PER_WORKER as per-worker capacity"
 register_weaviate_var "POLL_INTERVAL" "default" "0.1" "" "Polling interval in seconds for quiescence checks after insert or index completion; fractional seconds are allowed"
-
-# Mixed workload
-register_weaviate_var "MIXED_INSERT_DATA_FILEPATH" "conditional" "" "" "Path to the data that the mixed insert clients will use" "TASK=MIXED"
-register_weaviate_var "MIXED_INSERT_CLIENTS" "default" "1" "" "Mixed insert clients"
-register_weaviate_var "MIXED_INSERT_MODE" "default" "MAX" "MAX RATE" "Mode of operation for insert clients. 'MAX' sends the inserts as fast as possible, while 'RATE' also you to specify a rate per second"
-register_weaviate_var "MIXED_INSERT_BATCH_SIZE" "default" "32" "" "Batch size of mixed insert clients"
-
-register_weaviate_var "MIXED_QUERY_DATA_FILEPATH" "conditional" "" "" "Path to the data that the mixed query clients will use" "TASK=MIXED"
-register_weaviate_var "MIXED_QUERY_CLIENTS" "default" "1" "" "Mixed query clients"
-register_weaviate_var "MIXED_QUERY_MODE" "default" "MAX" "MAX RATE" "Mode of operation for query clients. 'MAX' sends the query as fast as possible, while 'RATE' also you to specify a rate per second"
-register_weaviate_var "MIXED_QUERY_BATCH_SIZE" "default" "32" "" "Batch size of mixed query clients"
