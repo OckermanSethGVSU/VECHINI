@@ -105,7 +105,9 @@ elif [[ "$PLATFORM" == "POLARIS" ]]; then
     
 fi
 # Create and pass in modified config #####
-cp -r ${base}/${MILVUS_CONFIG_DIR}/configs/ .
+if [[ ! -d ./configs ]]; then
+    cp -r "${base}/${MILVUS_CONFIG_DIR}/configs/" .
+fi
 
 cat << EOF > ./configs/user.yaml
 # Extra config to override default milvus.yaml
