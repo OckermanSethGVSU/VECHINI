@@ -42,6 +42,16 @@ Source of truth:
 | `QUERY_BALANCE_STRATEGY` | required when `TASK=QUERY` | `NO_BALANCE`, `WORKER_BALANCE` | Query balancing policy |
 | `QUERY_STREAMING` | `False` | `True`, `False` | Enable query streaming behavior |
 | `TOP_K` | `10` | free-form | Optional top-k override |
+| `MIXED_INSERT_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Mixed insert corpus file path |
+| `MIXED_QUERY_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Mixed query vector file path |
+| `MIXED_INSERT_MODE` | `MAX` | `MAX`, `RATE`, `max`, `rate` | Mixed insert pacing mode |
+| `MIXED_QUERY_MODE` | `MAX` | `MAX`, `RATE`, `max`, `rate` | Mixed query pacing mode |
+| `MIXED_INSERT_BATCH_SIZE` | `32` | free-form | Mixed insert batch size |
+| `MIXED_QUERY_BATCH_SIZE` | `32` | free-form | Mixed query batch size |
+| `MIXED_INSERT_CORPUS_SIZE` | optional | free-form | Mixed insert corpus size; empty means use all rows in the file |
+| `MIXED_QUERY_CORPUS_SIZE` | optional | free-form | Mixed query corpus size; empty means use all rows in the file |
+| `MIXED_INSERT_CLIENTS` | `1` | free-form | Mixed insert clients |
+| `MIXED_QUERY_CLIENTS` | `1` | free-form | Mixed query clients |
 | `BASE_DIR` | optional | free-form | Base directory containing generated run directories; auto-filled by the submit manager when empty |
 
 ## Qdrant Parameters
@@ -61,19 +71,15 @@ Source of truth:
 | `LOG_LEVEL` | `ERROR` | `ERROR`, `DEBUG`, `INFO` | Qdrant log level passed to generated node configs |
 | `HNSW_M` | `16` | free-form | HNSW M parameter |
 | `HNSW_EF_CONSTRUCTION` | `100` | free-form | HNSW efConstruction parameter |
+| `MAX_SEGMENT_SIZE` | optional | free-form | Optional Qdrant max segment size in KB; only applied when set |
+| `DEFAULT_SEGMENT_NUMBER` | optional | free-form | Optional Qdrant default segment count; only applied when set |
 | `GPU_INDEX` | `False` | `True`, `False` | Whether to use GPU indexing |
 | `INSERT_CLIENTS_PER_WORKER` | `1` | free-form | Insert clients per worker |
-| `TOTAL_QUERY_CLIENTS` | required when `TASK=QUERY|MIXED` | free-form | Total query clients across the run |
-| `QUERY_CLIENTS_PER_WORKER` | required when `TASK=QUERY|MIXED` | free-form | Query clients per worker |
+| `TOTAL_QUERY_CLIENTS` | optional | free-form | Optional total query clients across the run |
+| `QUERY_CLIENTS_PER_WORKER` | required when `TASK=QUERY` | free-form | Query clients per worker |
 | `HNSW_EF_SEARCH` | `64` | free-form | Query efSearch override |
-| `MIXED_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Mixed workload data file |
-| `MIXED_CORPUS_SIZE` | required when `TASK=MIXED` | free-form | Mixed-workload corpus size |
-| `INSERT_MODE` | `MAX` | `MAX`, `RATE` | Mixed insert pacing mode |
-| `INSERT_OPS_PER_SEC` | required when `INSERT_MODE=RATE` | free-form | Required when INSERT_MODE=RATE |
-| `QUERY_MODE` | `MAX` | `MAX`, `RATE` | Mixed query pacing mode |
-| `QUERY_OPS_PER_SEC` | required when `QUERY_MODE=RATE` | free-form | Required when QUERY_MODE=RATE |
-| `MIXED_INSERT_CLIENTS_PER_WORKER` | required when `TASK=MIXED` | free-form | Mixed insert clients per worker |
-| `MIXED_QUERY_CLIENTS_PER_WORKER` | required when `TASK=MIXED` | free-form | Mixed query clients per worker |
+| `INSERT_OPS_PER_SEC` | required when `MIXED_INSERT_MODE=RATE` | free-form | Required when MIXED_INSERT_MODE=RATE |
+| `QUERY_OPS_PER_SEC` | required when `MIXED_QUERY_MODE=RATE` | free-form | Required when MIXED_QUERY_MODE=RATE |
 | `RESULT_PATH` | `mixed_logs` | free-form | Output subdirectory for mixed workload logs |
 | `INSERT_BATCH_MIN` | optional | free-form | Optional randomized insert batch lower bound |
 | `INSERT_BATCH_MAX` | optional | free-form | Optional randomized insert batch upper bound |
@@ -126,21 +132,12 @@ Source of truth:
 | `DML_CHANNELS` | `16` | free-form | DML channel count |
 | `FLUSH_BEFORE_INDEX` | `TRUE` | `TRUE`, `FALSE` | Flush collection before indexing |
 | `QUERY_CLIENTS_PER_PROXY` | `1` | free-form | Query clients per proxy |
-| `INSERT_MODE` | `max` | `max`, `rate`, `MAX`, `RATE` | Mixed insert pacing mode |
-| `INSERT_OPS_PER_SEC` | optional | free-form | Insert ops/sec when INSERT_MODE=rate |
-| `MIXED_INSERT_BATCH_SIZE` | `32` | free-form | Mixed insert batch size |
-| `QUERY_MODE` | `max` | `max`, `rate`, `MAX`, `RATE` | Mixed query pacing mode |
-| `QUERY_OPS_PER_SEC` | optional | free-form | Query ops/sec when QUERY_MODE=rate |
-| `MIXED_QUERY_BATCH_SIZE` | `32` | free-form | Mixed query batch size |
+| `INSERT_OPS_PER_SEC` | optional | free-form | Insert ops/sec when MIXED_INSERT_MODE=rate |
+| `QUERY_OPS_PER_SEC` | optional | free-form | Query ops/sec when MIXED_QUERY_MODE=rate |
 | `MIXED_RESULT_PATH` | `mixed_logs` | free-form | Output subdirectory for mixed workload logs |
-| `MIXED_CORPUS_SIZE` | optional | free-form | Mixed-workload corpus size; empty means use all rows in the file |
-| `MIXED_QUERY_CLIENTS_PER_PROXY` | `1` | free-form | Mixed query clients per proxy |
-| `MIXED_INSERT_CLIENTS_PER_PROXY` | `1` | free-form | Mixed insert clients per proxy |
-| `MIXED_DATA_FILEPATH` | optional | free-form | Mixed workload data file |
 | `VECTOR_FIELD` | optional | free-form | Optional vector field override |
 | `ID_FIELD` | optional | free-form | Optional id field override |
 | `QUERY_EF_SEARCH` | optional | free-form | Optional query efSearch override |
-| `SEARCH_CONSISTENCY` | optional | free-form | Optional search consistency override |
 | `RPC_TIMEOUT` | optional | free-form | Optional RPC timeout override |
 | `MIXED_INSERT_BATCH_MIN` | optional | free-form | Optional randomized mixed insert batch lower bound |
 | `MIXED_INSERT_BATCH_MAX` | optional | free-form | Optional randomized mixed insert batch upper bound |
@@ -184,6 +181,8 @@ Source of truth:
 | `ASYNC_INDEXING` | `true` | `true`, `false` | Enable Weaviate async indexing |
 | `INDEX_TYPE` | `DYNAMIC` | `DYNAMIC`, `HNSW` | Vector index type for collection creation; DYNAMIC uses flat-to-HNSW conversion and HNSW creates a plain HNSW index |
 | `GRPC_MAX_MESSAGE_SIZE` | optional | free-form | Optional Weaviate gRPC max message size in bytes passed to the server container |
+| `RAFT_TIMEOUTS_MULTIPLIER` | optional | free-form | Optional multiplier for Weaviate Raft consensus timeouts and memberlist TCP timeouts |
+| `MINIMUM_INTERNAL_TIMEOUT` | optional | free-form | Optional minimum internal timeout passed to the Weaviate server container |
 | `DISABLE_LAZY_LOAD_SHARDS` | `true` | `true`, `false` | Disable Weaviate lazy shard loading |
 | `HNSW_STARTUP_WAIT_FOR_VECTOR_CACHE` | `true` | `true`, `false` | Wait for HNSW vector cache at startup |
 | `SHARD_COUNT` | `0` | free-form | Explicit shard count for collection creation; 0 derives the shard count from TOTAL |
@@ -198,11 +197,3 @@ Source of truth:
 | `QUERY_CLIENTS_PER_WORKER` | `1` | free-form | Query clients per worker rank |
 | `TOTAL_QUERY_CLIENTS` | optional | free-form | Optional total query clients across the run; when set, query clients are packed across workers using QUERY_CLIENTS_PER_WORKER as per-worker capacity |
 | `POLL_INTERVAL` | `0.1` | free-form | Polling interval in seconds for quiescence checks after insert or index completion; fractional seconds are allowed |
-| `MIXED_INSERT_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Path to the data that the mixed insert clients will use |
-| `MIXED_INSERT_CLIENTS` | `1` | free-form | Mixed insert clients |
-| `MIXED_INSERT_MODE` | `MAX` | `MAX`, `RATE` | Mode of operation for insert clients. 'MAX' sends the inserts as fast as possible, while 'RATE' also you to specify a rate per second |
-| `MIXED_INSERT_BATCH_SIZE` | `32` | free-form | Batch size of mixed insert clients |
-| `MIXED_QUERY_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Path to the data that the mixed query clients will use |
-| `MIXED_QUERY_CLIENTS` | `1` | free-form | Mixed query clients |
-| `MIXED_QUERY_MODE` | `MAX` | `MAX`, `RATE` | Mode of operation for query clients. 'MAX' sends the query as fast as possible, while 'RATE' also you to specify a rate per second |
-| `MIXED_QUERY_BATCH_SIZE` | `32` | free-form | Batch size of mixed query clients |
