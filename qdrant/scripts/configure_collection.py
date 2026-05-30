@@ -26,6 +26,13 @@ def env_int(name: str, default: int) -> int:
     return int(value.strip())
 
 
+def env_optional_int(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    return int(value.strip())
+
+
 def wait_for_shard_transfer(client, collection_name, shard_id, timeout=60, poll_interval=2):
     """Waits until the specified shard is no longer in a transfer state."""
     start = time.time()
@@ -122,6 +129,8 @@ for i in range(len(nodes)):
 vector_dim = int(os.environ["VECTOR_DIM"])
 hnsw_m = env_int("HNSW_M", 16)
 ef_construction = env_int("HNSW_EF_CONSTRUCTION", 100)
+max_segment_size = env_optional_int("MAX_SEGMENT_SIZE")
+default_segment_number = env_optional_int("DEFAULT_SEGMENT_NUMBER")
 distance_metric = os.environ["DISTANCE_METRIC"].strip().lower()
 
 match distance_metric:
@@ -136,6 +145,12 @@ match distance_metric:
 
 while True:
     try:
+        optimizers_kwargs = {"indexing_threshold": 0}
+        if max_segment_size is not None:
+            optimizers_kwargs["max_segment_size"] = max_segment_size
+        if default_segment_number is not None:
+            optimizers_kwargs["default_segment_number"] = default_segment_number
+
         client = QdrantClient(
                 host=nodes[0][0],
                 port=nodes[0][1],
@@ -149,7 +164,7 @@ while True:
             vectors_config=models.VectorParams(size=vector_dim, distance=metric),
             shard_number=len(nodes),
             hnsw_config=models.HnswConfigDiff(m=hnsw_m, ef_construct=ef_construction),
-            optimizers_config=models.OptimizersConfigDiff(indexing_threshold=0),
+            optimizers_config=models.OptimizersConfigDiff(**optimizers_kwargs),
             replication_factor=1,
         )
         
