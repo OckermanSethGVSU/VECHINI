@@ -105,7 +105,7 @@ For `TASK=MIXED`, `INSERT_START_ID` is used as the ID offset for mixed inserts. 
 
 1. `RESTORE_DIR` set: use `EXPECTED_CORPUS_SIZE`
 2. `INSERT_CORPUS_SIZE` set: use `INSERT_CORPUS_SIZE`
-3. `INSERT_DATA_FILEPATH` set: run the staged `inspect.py` helper to read the `.npy` row count
+3. `INSERT_DATA_FILEPATH` set: run the staged `npy_inspect.py` helper to read the `.npy` row count
 4. otherwise fail
 
 Use:
@@ -160,12 +160,12 @@ Remove `--generate-only` when the config is ready to submit.
 
 ## Utilities
 
-Use `utils/inspect.py` to inspect `.npy` workload files:
+Use `utils/npy_inspect.py` to inspect `.npy` workload files:
 
 ```bash
-qdrant/utils/inspect.py /path/to/file.npy
-qdrant/utils/inspect.py /path/to/file.npy --field shape
-qdrant/utils/inspect.py /path/to/file.npy --field dtype
+qdrant/utils/npy_inspect.py /path/to/file.npy
+qdrant/utils/npy_inspect.py /path/to/file.npy --field shape
+qdrant/utils/npy_inspect.py /path/to/file.npy --field dtype
 ```
 
 The default output is row count, which is useful for `INSERT_CORPUS_SIZE`, `QUERY_CORPUS_SIZE`, or `INSERT_START_ID`.
