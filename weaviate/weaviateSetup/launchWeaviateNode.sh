@@ -63,17 +63,26 @@ RAFT_JOIN=${RAFT_JOIN%,}
 # Shared registry
 # ------------------------------------------------------------
 OUTPUT_FILE="ip_registry.txt"
-touch "$OUTPUT_FILE"
+REGISTRY_OWNER_FILE="./runtime_state/ip_registry_owner.txt"
+REGISTRY_TOKEN="${PBS_JOBID:-${PMI_JOBID:-${SLURM_JOB_ID:-$(pwd)}}}:${TOTAL}"
 
 if [[ $RANK -eq 0 ]]; then
     : > "$OUTPUT_FILE"
+    # rank,node,ip,http,grpc,gossip,data,raft,raft_internal
+    echo "${RANK},${NODE_NAME},${IP_ADDR},${HTTP_PORT},${GRPC_PORT},${CLUSTER_GOSSIP_BIND_PORT},${CLUSTER_DATA_BIND_PORT},${RAFT_PORT},${RAFT_INTERNAL_RPC_PORT}" >> "$OUTPUT_FILE"
+    printf '%s\n' "$REGISTRY_TOKEN" > "$REGISTRY_OWNER_FILE"
+else
+    while true; do
+        if [[ -f "$REGISTRY_OWNER_FILE" ]] && [[ "$(cat "$REGISTRY_OWNER_FILE")" == "$REGISTRY_TOKEN" ]] &&
+            awk -F, '$1 == 0 && NF >= 9 {found=1} END {exit found ? 0 : 1}' "$OUTPUT_FILE" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    # rank,node,ip,http,grpc,gossip,data,raft,raft_internal
+    echo "${RANK},${NODE_NAME},${IP_ADDR},${HTTP_PORT},${GRPC_PORT},${CLUSTER_GOSSIP_BIND_PORT},${CLUSTER_DATA_BIND_PORT},${RAFT_PORT},${RAFT_INTERNAL_RPC_PORT}" >> "$OUTPUT_FILE"
 fi
-
-sleep 1
-
-
-# rank,node,ip,http,grpc,gossip,data,raft,raft_internal
-echo "${RANK},${NODE_NAME},${IP_ADDR},${HTTP_PORT},${GRPC_PORT},${CLUSTER_GOSSIP_BIND_PORT},${CLUSTER_DATA_BIND_PORT},${RAFT_PORT},${RAFT_INTERNAL_RPC_PORT}" >> "$OUTPUT_FILE"
 
 while true; do
     REG_COUNT=$(awk -F, 'NF >= 9 {seen[$1]=1} END {print length(seen)}' "$OUTPUT_FILE")
@@ -184,6 +193,18 @@ fi
 if [[ -n "${GRPC_MAX_MESSAGE_SIZE:-}" ]]; then
     COMMON_ARGS+=(
         --env GRPC_MAX_MESSAGE_SIZE="${GRPC_MAX_MESSAGE_SIZE}"
+    )
+fi
+
+if [[ -n "${RAFT_TIMEOUTS_MULTIPLIER:-}" ]]; then
+    COMMON_ARGS+=(
+        --env RAFT_TIMEOUTS_MULTIPLIER="${RAFT_TIMEOUTS_MULTIPLIER}"
+    )
+fi
+
+if [[ -n "${MINIMUM_INTERNAL_TIMEOUT:-}" ]]; then
+    COMMON_ARGS+=(
+        --env MINIMUM_INTERNAL_TIMEOUT="${MINIMUM_INTERNAL_TIMEOUT}"
     )
 fi
 
