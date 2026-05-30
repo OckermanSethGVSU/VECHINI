@@ -750,22 +750,24 @@ func runOneQuery(
 		return lat, nil, nil, err
 	}
 
-	ids := make([]int64, topK)
-	dists := make([]float32, topK)
-	for i := 0; i < topK; i++ {
-		hit := results[i]
-
-		if raw, ok := hit.Properties[idPropName]; ok {
-			switch value := raw.(type) {
-			case int64:
-				ids[i] = value
-			case int:
-				ids[i] = int64(value)
-			case float64:
-				ids[i] = int64(value)
-			case float32:
-				ids[i] = int64(value)
-			}
+	ids := make([]int64, len(results))
+	dists := make([]float32, len(results))
+	for i, hit := range results {
+		raw, ok := hit.Properties[idPropName]
+		if !ok {
+			return lat, nil, nil, fmt.Errorf("query result missing %s property", idPropName)
+		}
+		switch value := raw.(type) {
+		case int64:
+			ids[i] = value
+		case int:
+			ids[i] = int64(value)
+		case float64:
+			ids[i] = int64(value)
+		case float32:
+			ids[i] = int64(value)
+		default:
+			return lat, nil, nil, fmt.Errorf("query result %s had unsupported type %T", idPropName, raw)
 		}
 		dists[i] = hit.Metadata.Distance
 	}
@@ -1368,6 +1370,10 @@ func clientWorker(
 					err error
 				}
 
+				// The Weaviate gRPC client does not expose a result shape for
+				// independent batched query vectors here, so QUERY_BATCH_SIZE is
+				// used as a client-side batch/concurrency limit: one search per
+				// vector, launched within the current batch window.
 				startUpload = time.Now()
 				results := make([]queryBatchResult, len(batch))
 				var queryWG sync.WaitGroup
