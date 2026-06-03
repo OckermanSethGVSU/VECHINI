@@ -116,6 +116,21 @@ def get_data_coord_segment_max_size() -> str:
     return "1024" if value == "" else value
 
 
+def get_seal_proportion() -> str:
+    value = os.environ.get("SEAL_PROPORTION", "0.12").strip()
+    return "0.12" if value == "" else value
+
+
+def get_max_idle_time() -> str:
+    value = os.environ.get("MAX_IDLE_TIME", "600").strip()
+    return "600" if value == "" else value
+
+
+def get_enable_compaction() -> str:
+    value = os.environ.get("ENABLE_COMPACTION", "true").strip()
+    return "true" if value == "" else value.lower()
+
+
 def get_minio_mode() -> str:
     return os.environ.get("MINIO_MODE", "off").strip().lower()
 
@@ -155,6 +170,9 @@ def get_local_shared_storage_path() -> str:
 def apply_common_tuning(text: str) -> str:
     gpu_enabled = os.environ.get("GPU_INDEX", "false").strip().lower() == "true"
     text = text.replace("<MAX_SEGMENT_SIZE>", get_data_coord_segment_max_size())
+    text = text.replace("<SEAL_PROPORTION>", get_seal_proportion())
+    text = text.replace("<MAX_IDLE_TIME>", get_max_idle_time())
+    text = text.replace("<ENABLE_COMPACTION>", get_enable_compaction())
     if not gpu_enabled:
         text = text.replace("initMemSize: 0", "initMemSize: 2048")
         text = text.replace("maxMemSize: 0", "maxMemSize: 4096")

@@ -45,6 +45,9 @@ register_milvus_var "INIT_FLAT_INDEX" "default" "FALSE" "TRUE FALSE" "Whether to
 register_milvus_var "SHARDS" "default" "1" "" "Collection shard count"
 register_milvus_var "DML_CHANNELS" "default" "16" "" "DML channel count"
 register_milvus_var "MAX_SEGMENT_SIZE" "default" "1024" "" "Milvus dataCoord.segment.maxSize in MB"
+register_milvus_var "SEAL_PROPORTION" "default" "0.12" "" "Milvus dataCoord.segment.sealProportion"
+register_milvus_var "MAX_IDLE_TIME" "default" "600" "" "Milvus dataCoord.segment.maxIdleTime in seconds"
+register_milvus_var "ENABLE_COMPACTION" "default" "true" "true false True False TRUE FALSE" "Milvus dataCoord.enableCompaction"
 register_milvus_var "FLUSH_BEFORE_INDEX" "default" "TRUE" "TRUE FALSE" "Flush collection before indexing"
 
 # Query workload

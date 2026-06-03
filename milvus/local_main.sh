@@ -729,6 +729,7 @@ start_local_milvus() {
     local -a minio_env_args=()
 
     write_local_configs
+    ensure_container_network
 
     case "$MINIO_MODE" in
         off)
@@ -741,7 +742,6 @@ start_local_milvus() {
                 -e MINIO_SECRET_ACCESS_KEY="${MINIO_SECRET_ACCESS_KEY}"
                 -e MINIO_BUCKET_NAME="${MINIO_BUCKET_NAME}"
             )
-            ensure_container_network
             ;;
         *)
             echo "Local mode only supports MINIO_MODE='off' or 'single' (got '${MINIO_MODE}')." >&2
