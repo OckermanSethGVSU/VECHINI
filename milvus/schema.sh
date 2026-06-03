@@ -44,6 +44,7 @@ register_milvus_var "BULK_IMPORT_SUMMARY_PATH" "default" "" "" "Path to bulk imp
 register_milvus_var "INIT_FLAT_INDEX" "default" "FALSE" "TRUE FALSE" "Whether to initialize a flat index"
 register_milvus_var "SHARDS" "default" "1" "" "Collection shard count"
 register_milvus_var "DML_CHANNELS" "default" "16" "" "DML channel count"
+register_milvus_var "MAX_SEGMENT_SIZE" "default" "1024" "" "Milvus dataCoord.segment.maxSize in MB"
 register_milvus_var "FLUSH_BEFORE_INDEX" "default" "TRUE" "TRUE FALSE" "Flush collection before indexing"
 
 # Query workload

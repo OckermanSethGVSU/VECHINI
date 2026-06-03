@@ -111,6 +111,11 @@ def get_dml_channels() -> str:
     return "16" if value == "" else value
 
 
+def get_data_coord_segment_max_size() -> str:
+    value = os.environ.get("MAX_SEGMENT_SIZE", "1024").strip()
+    return "1024" if value == "" else value
+
+
 def get_minio_mode() -> str:
     return os.environ.get("MINIO_MODE", "off").strip().lower()
 
@@ -149,6 +154,7 @@ def get_local_shared_storage_path() -> str:
 
 def apply_common_tuning(text: str) -> str:
     gpu_enabled = os.environ.get("GPU_INDEX", "false").strip().lower() == "true"
+    text = text.replace("<MAX_SEGMENT_SIZE>", get_data_coord_segment_max_size())
     if not gpu_enabled:
         text = text.replace("initMemSize: 0", "initMemSize: 2048")
         text = text.replace("maxMemSize: 0", "maxMemSize: 4096")
