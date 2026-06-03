@@ -76,8 +76,8 @@ register_milvus_var "EXPECTED_CORPUS_SIZE" "default" "10000000" "" "Expected cor
 
 # Distributed topology
 register_milvus_var "ETCD_MODE" "default" "single" "single replicated" "ETCD topology"
-register_milvus_var "STREAMING_NODES" "default" "2" "" "Streaming node count"
-register_milvus_var "STREAMING_NODES_PER_CN" "default" "2" "" "Streaming nodes per compute node"
+register_milvus_var "STREAMING_NODES" "default" "1" "" "Streaming node count"
+register_milvus_var "STREAMING_NODES_PER_CN" "default" "1" "" "Streaming nodes per compute node"
 register_milvus_var "QUERY_NODES" "default" "1" "" "Query node count"
 register_milvus_var "QUERY_NODES_PER_CN" "default" "1" "" "Query nodes per compute node"
 register_milvus_var "DATA_NODES" "default" "1" "" "Data node count"
