@@ -4,6 +4,7 @@ import time
 import requests
 import numpy as np
 from pymilvus import MilvusClient
+from pymilvus import utility
 
 """
 IMPORTANT NOTE: if the collection was initialized with a FLAT index and this script
@@ -317,10 +318,14 @@ while True:
 
 res = client.describe_collection(collection_name=collection_name)
 index_status = client.describe_index(collection_name, 'vector')
+segments = utility.get_query_segment_info(collection_name)
 
 print("**************Collection State After Indexing***************",flush=True)
 print(res,flush=True)
 print("************************************************************",flush=True)
 print("**************Index State After Indexing********************",flush=True)
 print(index_status, flush=True)
+print("************************************************************",flush=True)
+print("**************Segment State*********************",flush=True)
+print("Number of Segments:", len(segments), "Segment Info: ", segments, flush=True)
 print("************************************************************",flush=True)
