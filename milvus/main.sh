@@ -483,9 +483,10 @@ fi
 mkdir -p client_timings
 mv *.csv *.txt client_timings/
 mv ./configs/ runtime_state/
-mv *.out *.json *.jsonl runtime_state/
+mv *.out *.json runtime_state/
 
 if [[ "$TRACING" == "True" ]]; then
+        mv *.jsonl runtime_state/
         python3 analyze_traces.py > analysis.txt
 fi
 
