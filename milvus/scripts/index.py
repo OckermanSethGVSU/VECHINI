@@ -318,7 +318,7 @@ while True:
 
 res = client.describe_collection(collection_name=collection_name)
 index_status = client.describe_index(collection_name, 'vector')
-segments = utility.get_query_segment_info(collection_name)
+segments = client.list_loaded_segments(collection_name=collection_name)
 
 print("**************Collection State After Indexing***************",flush=True)
 print(res,flush=True)
