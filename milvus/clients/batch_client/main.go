@@ -19,6 +19,7 @@ import (
 	"github.com/milvus-io/milvus/client/v2/column"
 	"github.com/milvus-io/milvus/client/v2/entity"
 	"github.com/milvus-io/milvus/client/v2/milvusclient"
+	"github.com/milvus-io/milvus/client/v2/index"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -436,7 +437,7 @@ func getEnvIntDefault(defaultValue int, names ...string) int {
 			continue
 		}
 
-		parsed, err := strconv.Atoi(value)
+		parsed, _ := strconv.Atoi(value)
 		if err != nil || parsed <= 0 {
 			log.Fatalf("invalid %s=%q", name, value)
 		}
@@ -844,8 +845,8 @@ func clientWorker(
 		resultWriter := resultWriters[sweepIdx]
 
 		fmt.Printf(
-			"Proxy=%d client=%d global_client=%d assigned [%d,%d) rows=%d batch=%d\n",
-			workerRank, clientID, globalClientRank, startIdx, endIdx, localRows, sweep.BatchSize,
+			"Proxy=%d client=%d global_client=%d assigned [%d,%d) rows=%d batch=%d, efSearch=%d\n",
+			workerRank, clientID, globalClientRank, startIdx, endIdx, localRows, sweep.BatchSize, efSearch,
 		)
 
 		var (
@@ -950,7 +951,7 @@ func clientWorker(
 				searchOpt := milvusclient.NewSearchOption(collectionName, topK, vectors).
 					WithANNSField(vectorField).
 					WithConsistencyLevel(entity.ClBounded).
-					WithSearchParam("ef", strconv.Itoa(efSearch))
+					WithAnnParam(index.NewHNSWAnnParam(efSearch))
 
 				startUpload = time.Now()
 				queryResults, err = mclient.Search(opCtx, searchOpt)
