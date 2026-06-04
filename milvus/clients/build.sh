@@ -31,6 +31,13 @@ echo "Output binary: $DIR/$BIN_NAME"
 if [ ! -f "go.mod" ]; then
     echo "No go.mod found. Initializing module..."
     go mod init "$BIN_NAME"
+
+    echo "Pinning dependency versions compatible with etcd v3.5.5..."
+    go get go.opentelemetry.io/otel@v1.19.0
+    go get go.opentelemetry.io/otel/trace@v1.19.0
+    go get go.opentelemetry.io/otel/metric@v1.19.0
+    go get go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc@v0.45.0
+
     # Download and clean dependencies
     echo "Tidying modules..."
     go mod tidy
