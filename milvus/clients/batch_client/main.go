@@ -437,7 +437,7 @@ func getEnvIntDefault(defaultValue int, names ...string) int {
 			continue
 		}
 
-		parsed, _ := strconv.Atoi(value)
+		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed <= 0 {
 			log.Fatalf("invalid %s=%q", name, value)
 		}
