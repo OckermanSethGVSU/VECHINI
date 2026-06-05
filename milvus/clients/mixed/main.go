@@ -867,7 +867,7 @@ func (m *milvusBackend) Search(ctx context.Context, vectors [][]float32, topK in
 		ctx,
 		milvusclient.NewSearchOption(m.collectionName, topK, queryVectors).
 			WithANNSField(m.vectorField).
-			WithAnnParam(index.NewHNSWAnnParam(m.efSearch)),
+			WithAnnParam(index.NewHNSWAnnParam(m.ef)),
 	)
 	if err != nil {
 		return nil, err
