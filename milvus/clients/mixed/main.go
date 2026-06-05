@@ -19,6 +19,7 @@ import (
 	"github.com/kshedden/gonpy"
 	"github.com/milvus-io/milvus/client/v2/entity"
 	"github.com/milvus-io/milvus/client/v2/milvusclient"
+	"github.com/milvus-io/milvus/client/v2/index"
 )
 
 type role string
@@ -866,7 +867,7 @@ func (m *milvusBackend) Search(ctx context.Context, vectors [][]float32, topK in
 		ctx,
 		milvusclient.NewSearchOption(m.collectionName, topK, queryVectors).
 			WithANNSField(m.vectorField).
-			WithSearchParam("ef", strconv.Itoa(m.ef)),
+			WithAnnParam(index.NewHNSWAnnParam(m.efSearch)),
 	)
 	if err != nil {
 		return nil, err
