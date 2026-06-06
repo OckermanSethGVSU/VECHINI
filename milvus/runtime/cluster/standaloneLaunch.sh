@@ -234,7 +234,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 #     --env MILVUS_BUILD_DIR=$MILVUS_BUILD_DIR \
 #     -B ./execute.sh:/milvus/app_execute.sh \
 #     -B ./configs/:/milvus/configs/ \
-#     -B /lus/flare/projects/radix-io/sockerman/temp/milvus/cpuMilvus/:/milvus/ \
 #     -B /usr/lib64/libatomic.so.1:/usr/lib64/libatomic.so.1 \
 #     milvus.sif
 
@@ -265,7 +264,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 # COMMON_STORAGETYPE=local -> store on local disk rather than sending data to remote (minio)
 
 
-# base="/eagle/projects/radix-io/sockerman/vectorEval/milvus/singleWorker"
 # apptainer shell --no-home --fakeroot --writable-tmpfs \
 # --env MILVUSCONF=/milvus/configs/ \
 # --env ETCD_USE_EMBED=true \

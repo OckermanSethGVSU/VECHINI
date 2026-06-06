@@ -32,10 +32,10 @@ Config files are plain `KEY=value` env files.
 
 ## Key Files
 
-- [pbs_submit_manager.sh](/home/seth/Documents/research/SCVectorDB/pbs_submit_manager.sh)
-- [common/submit_lib.sh](/home/seth/Documents/research/SCVectorDB/common/submit_lib.sh)
-- [common/schema.sh](/home/seth/Documents/research/SCVectorDB/common/schema.sh)
-- [common/engine_schema_lib.sh](/home/seth/Documents/research/SCVectorDB/common/engine_schema_lib.sh)
+- [pbs_submit_manager.sh](../pbs_submit_manager.sh)
+- [common/submit_lib.sh](../common/submit_lib.sh)
+- [common/schema.sh](../common/schema.sh)
+- [common/engine_schema_lib.sh](../common/engine_schema_lib.sh)
 
 ## Validation
 

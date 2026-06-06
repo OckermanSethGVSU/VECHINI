@@ -5,10 +5,10 @@ Milvus is an active engine in the unified submit workflow and supports both
 
 ## Main Files
 
-- [milvus/engine.sh](/home/seth/Documents/research/SCVectorDB/milvus/engine.sh)
-- [milvus/schema.sh](/home/seth/Documents/research/SCVectorDB/milvus/schema.sh)
-- [milvus/main.sh](/home/seth/Documents/research/SCVectorDB/milvus/main.sh)
-- [milvus/local_main.sh](/home/seth/Documents/research/SCVectorDB/milvus/local_main.sh)
+- [milvus/engine.sh](../../milvus/engine.sh)
+- [milvus/schema.sh](../../milvus/schema.sh)
+- [milvus/main.sh](../../milvus/main.sh)
+- [milvus/local_main.sh](../../milvus/local_main.sh)
 
 ## Active Tasks
 
