@@ -212,6 +212,8 @@ engine_needs_npy_inspect() {
 engine_copy_payload() {
     local target_dir="$1"
 
+    copy_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state"
+
     if [[ "${RUN_MODE^^}" == "LOCAL" ]]; then
         copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" \
             "batch_client"
