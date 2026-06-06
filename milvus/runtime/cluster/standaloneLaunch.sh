@@ -20,10 +20,6 @@ elif [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
     DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}"
     TARGET_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/milvusDir"
     (( RANK == 0 )) && echo "Milvus is using DAOS storage"
-    APPTAINER_ARGS+=(
-        --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-        --env LD_LIBRARY_PATH=/opt/daos/lib64
-    )
 
 
 elif [[ "$STORAGE_MEDIUM" == "lustre" ]]; then
@@ -50,12 +46,6 @@ case "$ETCD_MEDIUM" in
         mkdir -p "$ETCD_HOST_BASE"
         ETCD_DATA_DIR="/etcd-data/etcd"
         ETCD_BIND_ARGS+=(-B "${ETCD_HOST_BASE}:/etcd-data")
-        if [[ "$STORAGE_MEDIUM" != "DAOS" ]]; then
-            APPTAINER_ARGS+=(
-                --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-                --env LD_LIBRARY_PATH=/opt/daos/lib64
-            )
-        fi
         (( RANK == 0 )) && echo "ETCD using DAOS for storage"
         ;;
     lustre)

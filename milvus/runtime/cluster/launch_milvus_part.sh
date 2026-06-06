@@ -15,11 +15,6 @@ elif [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
     DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when STORAGE_MEDIUM=DAOS}"
     DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}"
     TARGET_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/milvusDir"
-    
-    APPTAINER_ARGS+=(
-        --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-        --env LD_LIBRARY_PATH=/opt/daos/lib64
-    )
 
 elif [[ "$STORAGE_MEDIUM" == "lustre" ]]; then
     TARGET_BASE="./milvusDir"
