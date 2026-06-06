@@ -97,7 +97,6 @@ base=${BASE_DIR}
 POLARIS_BINDS=()
 if [[ "$PLATFORM" == "POLARIS" ]]; then
     POLARIS_BINDS+=(
-        -B "/eagle/projects/argonne_tpc/sockerman/buildingFromSource/gpuMilvus/cuda-merged:/usr/local/cuda:ro"
         -B "/opt/nvidia/hpc_sdk:/opt/nvidia/hpc_sdk:ro"
         --env PLATFORM=POLARIS
     )

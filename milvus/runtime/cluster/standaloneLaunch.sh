@@ -98,7 +98,6 @@ if [[ "$PLATFORM" == "AURORA" ]]; then
 elif [[ "$PLATFORM" == "POLARIS" ]]; then
     base=$BASE_DIR
     POLARIS_BINDS+=(
-        -B "/eagle/projects/argonne_tpc/sockerman/buildingFromSource/gpuMilvus/cuda-merged:/usr/local/cuda:ro"
         -B "/opt/nvidia/hpc_sdk:/opt/nvidia/hpc_sdk:ro"
         --env PLATFORM=POLARIS
     )
@@ -253,7 +252,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 
 
 
-# cudaPath="/eagle/projects/argonne_tpc/sockerman/buildingFromSource/gpuMilvus"
 # apptainer shell --no-home --fakeroot --writable-tmpfs --nv \
 #     --pwd /milvus \
 #     --env MILVUSCONF=/milvus/configs/ \
@@ -270,7 +268,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 #     milvus.sif 
 
     # -B ${base}/milvus/:/milvus/ \
-    # -B ${cudaPath}/cuda-merged:/usr/local/cuda:ro \
     # -B /opt/nvidia/hpc_sdk:/opt/nvidia/hpc_sdk:ro \
 
 
