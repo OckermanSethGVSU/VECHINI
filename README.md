@@ -84,11 +84,11 @@ Notes:
 
 
 ## Scientfic Datasets
-While vector search has been extensively studied in industry applications, less is known about its use in scientific domains (e.g, molecular search, meteorological trajectory detection, literature-driven hypothesis generation). This repository aims to address that gap by curating scientific embedding/query datasets for public use..
+While vector search has been extensively studied in industry applications, less is known about its use in scientific domains (e.g, molecular search, meteorological trajectory detection, literature-driven hypothesis generation). This repository aims to address that gap by curating scientific embedding/query datasets for public use.
 
 | Dataset | Source data | Original use case | Number of embeddings | Dimensionality | Intended distance metric | Embedding model |
 |---|---|---|---:|---:|---|---|
-| [Pes2o-VE](https://www.materialsdatafacility.org/detail/e31e3225-7f75-4313-9983-f8b75811405f-1.0) | [PeS2o text corpus](https://github.com/allenai/pes2o) | Scientific document / embedding retrieval | ~88 million | 2560 | Cosine | Qwen3-Embedding-4B |
+| [Pes2o-VE](https://www.materialsdatafacility.org/detail/e31e3225-7f75-4313-9983-f8b75811405f-1.0) | [PeS2o text corpus](https://github.com/allenai/pes2o) | Scientific document retrieval | ~88 million | 2560 | Cosine | Qwen3-Embedding-4B |
 
 
 
