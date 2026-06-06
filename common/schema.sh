@@ -12,6 +12,8 @@ register_common_var "PLATFORM" "conditional" "" "POLARIS AURORA" "Target platfor
 register_common_var "NODES" "conditional" "" "" "Compute-node count to allocate for worker ranks" "RUN_MODE=PBS"
 register_common_var "CORES" "default" "" "" "CPU cores assigned per worker rank; empty disables explicit CPU binding"
 register_common_var "STORAGE_MEDIUM" "default" "memory" "memory DAOS lustre SSD" "Storage medium for engine data"
+register_common_var "DAOS_PROJECT" "conditional" "" "" "DAOS project/pool name" "STORAGE_MEDIUM=DAOS"
+register_common_var "DAOS_CONTAINER" "conditional" "" "" "DAOS container name" "STORAGE_MEDIUM=DAOS"
 
 
 # PBS variables

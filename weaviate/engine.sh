@@ -104,7 +104,11 @@ engine_load_combo() {
     CORES_CURRENT="$CORES"
     TOTAL_NODES=$((NODES_CURRENT + 1))
     JOB_NAME="${TASK}_${STORAGE_MEDIUM}_N${NODES_CURRENT}"
-    REQUIRES_DAOS="false"
+    if [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
+        REQUIRES_DAOS="true"
+    else
+        REQUIRES_DAOS="false"
+    fi
 }
 
 # Validate a loaded combo after sweep expansion.

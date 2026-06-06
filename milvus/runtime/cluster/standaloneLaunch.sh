@@ -16,8 +16,8 @@ if [[ "$STORAGE_MEDIUM" == "memory" ]]; then
 
 DAOS_ARGS=()
 elif [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
-    DAOS_POOL="radix-io"
-    DAOS_CONT="vectorDBTesting"
+    DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when STORAGE_MEDIUM=DAOS}"
+    DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}"
     TARGET_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/milvusDir"
     (( RANK == 0 )) && echo "Milvus is using DAOS storage"
     APPTAINER_ARGS+=(
@@ -44,8 +44,8 @@ case "$ETCD_MEDIUM" in
         (( RANK == 0 )) && echo "ETCD using memory for storage"
         ;;
     DAOS)
-        DAOS_POOL="radix-io"
-        DAOS_CONT="vectorDBTesting"
+        DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when ETCD_MEDIUM=DAOS}"
+        DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when ETCD_MEDIUM=DAOS}"
         ETCD_HOST_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/etcdDir"
         mkdir -p "$ETCD_HOST_BASE"
         ETCD_DATA_DIR="/etcd-data/etcd"
