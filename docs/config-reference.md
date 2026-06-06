@@ -9,7 +9,7 @@ source of truth.
 
 Source of truth:
 
-- [common/schema.sh](/lus/flare/projects/radix-io/sockerman/SCVectorDB/common/schema.sh)
+- [common/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/common/schema.sh)
 
 - These variables apply across all engines.
 - Some variables are only conditionally required based on `TASK` or `RUN_MODE`.
@@ -58,7 +58,7 @@ Source of truth:
 
 Source of truth:
 
-- [qdrant/schema.sh](/lus/flare/projects/radix-io/sockerman/SCVectorDB/qdrant/schema.sh)
+- [qdrant/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/qdrant/schema.sh)
 
 - Qdrant-specific behavior may derive additional runtime values from other settings.
 
@@ -97,7 +97,7 @@ Source of truth:
 
 Source of truth:
 
-- [milvus/schema.sh](/lus/flare/projects/radix-io/sockerman/SCVectorDB/milvus/schema.sh)
+- [milvus/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/milvus/schema.sh)
 
 - Milvus-specific runtime behavior may derive storage and topology details automatically.
 
@@ -106,8 +106,8 @@ Source of truth:
 | `MODE` | `STANDALONE` | `DISTRIBUTED`, `STANDALONE` | Milvus deployment mode |
 | `MILVUS_BUILD_DIR` | optional | free-form | Milvus build directory |
 | `MILVUS_CONFIG_DIR` | `runtime` | free-form | Milvus config directory |
-| `PERF` | `NONE` | `NONE`, `STAT`, `TRACE` | Performance collection mode |
-| `PERF_EVENTS` | `topdown-be-bound,topdown-mem-bound,topdown-retiring,topdown-fe-bound,topdown-bad-spec` | free-form | Comma-separated perf stat events |
+| `PERF` | `NONE` | `NONE`, `STAT`, `RECORD` | Performance collection mode |
+| `PERF_EVENTS` | `cycles,instructions,topdown-be-bound,topdown-mem-bound,topdown-retiring` | free-form | Comma-separated perf stat events |
 | `WAL` | `woodpecker` | free-form | Milvus WAL mode |
 | `GPU_INDEX` | `False` | `True`, `False` | Whether to use GPU indexing |
 | `TRACING` | `False` | `True`, `False` | Enable tracing |
@@ -130,6 +130,10 @@ Source of truth:
 | `INIT_FLAT_INDEX` | `FALSE` | `TRUE`, `FALSE` | Whether to initialize a flat index |
 | `SHARDS` | `1` | free-form | Collection shard count |
 | `DML_CHANNELS` | `16` | free-form | DML channel count |
+| `MAX_SEGMENT_SIZE` | `1024` | free-form | Milvus dataCoord.segment.maxSize in MB |
+| `SEAL_PROPORTION` | `0.12` | free-form | Milvus dataCoord.segment.sealProportion |
+| `MAX_IDLE_TIME` | `600` | free-form | Milvus dataCoord.segment.maxIdleTime in seconds |
+| `ENABLE_COMPACTION` | `true` | `true`, `false`, `True`, `False`, `TRUE`, `FALSE` | Milvus dataCoord.enableCompaction |
 | `FLUSH_BEFORE_INDEX` | `TRUE` | `TRUE`, `FALSE` | Flush collection before indexing |
 | `QUERY_CLIENTS_PER_PROXY` | `1` | free-form | Query clients per proxy |
 | `INSERT_OPS_PER_SEC` | optional | free-form | Insert ops/sec when MIXED_INSERT_MODE=rate |
@@ -150,8 +154,8 @@ Source of truth:
 | `RESTORE_DIR` | optional | free-form | Restore an existing Milvus state from this directory |
 | `EXPECTED_CORPUS_SIZE` | `10000000` | free-form | Expected corpus size when restoring |
 | `ETCD_MODE` | `single` | `single`, `replicated` | ETCD topology |
-| `STREAMING_NODES` | `2` | free-form | Streaming node count |
-| `STREAMING_NODES_PER_CN` | `2` | free-form | Streaming nodes per compute node |
+| `STREAMING_NODES` | `1` | free-form | Streaming node count |
+| `STREAMING_NODES_PER_CN` | `1` | free-form | Streaming nodes per compute node |
 | `QUERY_NODES` | `1` | free-form | Query node count |
 | `QUERY_NODES_PER_CN` | `1` | free-form | Query nodes per compute node |
 | `DATA_NODES` | `1` | free-form | Data node count |
@@ -165,7 +169,7 @@ Source of truth:
 
 Source of truth:
 
-- [weaviate/schema.sh](/lus/flare/projects/radix-io/sockerman/SCVectorDB/weaviate/schema.sh)
+- [weaviate/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/weaviate/schema.sh)
 
 - Weaviate collection creation also depends on `weaviate/scripts/create_basic_collection.py`.
 - When unset, `HNSW_DYNAMIC_THRESHOLD` may be derived from `INSERT_CORPUS_SIZE` or `INSERT_DATA_FILEPATH`.
