@@ -12,7 +12,7 @@ Main HPC entrypoint:
 - Deployment modes: `STANDALONE`, `DISTRIBUTED` (`MODE`)
 - Platforms: `POLARIS`, `AURORA` (`PLATFORM`)
 - Storage media: `memory`, `DAOS`, `lustre`, `SSD` (`STORAGE_MEDIUM`)
-- Perf modes: `NONE`, `STAT`, `TRACE` (`PERF`)
+- Perf modes: `NONE`, `STAT`, `RECORD` (`PERF`)
 - Optional tracing via `TRACING=True`
 - Insert/query balancing used by the Go clients:
   - `INSERT_BALANCE_STRATEGY`: `NO_BALANCE`, `WORKER_BALANCE`

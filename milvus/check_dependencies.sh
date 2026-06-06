@@ -32,7 +32,7 @@ required_paths=(
     "clients/mixed/mixed"
     "clients/mixed/main.go"
     "utils/status.py"
-    "perfDir/"
+    "runtime_state/"
 )
 
 present=()
@@ -52,11 +52,11 @@ done
 
 PERF_WARNING=false
 
-if [[ -d "perfDir/" ]]; then
-    if [[ ! -x "perfDir/perf" ]]; then
+if [[ -d "runtime_state/" ]]; then
+    if [[ ! -x "runtime_state/perf" ]]; then
         PERF_WARNING=true
         if [[ "$USE_PERF" == "true" ]]; then
-            missing+=("perfDir/perf (required because USE_PERF=true)")
+            missing+=("runtime_state/perf (required because USE_PERF=true)")
         fi
     fi
 fi
@@ -87,9 +87,9 @@ fi
 
 if [[ "$PERF_WARNING" == "true" && "$USE_PERF" == "false" ]]; then
     echo ""
-    echo "⚠️  Warning: perfDir/ exists but no compatible 'perf' binary found."
+    echo "⚠️  Warning: runtime_state/ exists but no executable 'perf' binary was found."
     echo "    Profiling will be skipped (USE_PERF=false)."
-    echo "    If you intend to profile, place a compatible 'perf' binary in perfDir/."
+    echo "    If you intend to profile, place a compatible 'perf' binary at runtime_state/perf."
 fi
 
 echo "All required Milvus dependencies are present."

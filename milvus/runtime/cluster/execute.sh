@@ -9,8 +9,8 @@ if [ -n "$MILVUS_BUILD_DIR" ]; then
   LIBDIR=/milvus/internal/core/output/lib && \
   export LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH}" && \
   export LD_PRELOAD="/usr/lib64/libatomic.so.1 /milvus/internal/core/output/lib/libjemalloc.so"
-   
-fi 
+
+fi
 
 if [[ "$PLATFORM" == "POLARIS" ]]; then
   export CUDAToolkit_ROOT=/usr/local/cuda
@@ -29,13 +29,14 @@ HEALTH_HOST="${MILVUS_HEALTH_HOST:-127.0.0.1}"
 HEALTH_PORT="${MILVUS_HEALTH_PORT:-${METRICS_PORT:-9091}}"
 APT_RETRIES="${APT_RETRIES:-5}"
 APT_RETRY_DELAY_SECONDS="${APT_RETRY_DELAY_SECONDS:-10}"
-DEFAULT_PERF_STAT_EVENTS="cycles,instructions,branches,branch-misses,cache-misses"
+DEFAULT_PERF_STAT_EVENTS="cycles,instructions,topdown-be-bound,topdown-mem-bound,topdown-retiring"
 RUNTIME_STATE_DIR="${RUNTIME_STATE_DIR:-/runtime_state}"
+PERF_BIN="${PERF_BIN:-$RUNTIME_STATE_DIR/perf}"
 
 # if Milvus is restoring itself, give it longer to launch
 if [ -n "$RESTORE_DIR" ]; then
   STARTUP_TIMEOUT_SECONDS=600
-fi 
+fi
 
 
 retry_command() {
@@ -135,6 +136,10 @@ install_perf_dependencies() {
 
 
 if [[ "$PERF" == "RECORD" || "$PERF" == "STAT" ]]; then
+  if [[ ! -x "$PERF_BIN" ]]; then
+    echo "Perf mode $PERF requires an executable at $PERF_BIN" >&2
+    exit 1
+  fi
   install_perf_dependencies || exit 1
   echo "Runtime and perf dependencies installed; launching Milvus"
 else
@@ -198,13 +203,13 @@ done
 
 if [[ "$PERF" == "RECORD" ]]; then
     echo "Rank ${RANK} Launching perf record"
-    /perfDir/perf record -F 99 --call-graph fp -g --proc-map-timeout 5000 -o "$RUNTIME_STATE_DIR/perf${RANK}.data"  -p "$MILVUS_PID" &
+    "$PERF_BIN" record -F 99 --call-graph fp -g --proc-map-timeout 5000 -o "$RUNTIME_STATE_DIR/perf${RANK}.data"  -p "$MILVUS_PID" &
     PERF_PID=$!
 
 elif [[ "$PERF" == "STAT" ]]; then
     echo "Rank ${RANK} Launching perf stat"
     PERF_STAT_EVENTS="${PERF_EVENTS:-$DEFAULT_PERF_STAT_EVENTS}"
-    /perfDir/perf stat  -e "$PERF_STAT_EVENTS" -o "$RUNTIME_STATE_DIR/perf${RANK}.data"  -p "$MILVUS_PID" &
+    "$PERF_BIN" stat  -e "$PERF_STAT_EVENTS" -o "$RUNTIME_STATE_DIR/perf${RANK}.data"  -p "$MILVUS_PID" &
     PERF_PID=$!
 fi
 
@@ -216,13 +221,17 @@ done
 
 # stop perf cleanly (same as Ctrl-C)
 if [[ "$PERF" == "RECORD" || "$PERF" == "STAT" ]]; then
-    echo "Rank ${RANK} stopping perf"
-    kill -INT "$PERF_PID"
-    wait "$PERF_PID"
+    if kill -0 "$PERF_PID" 2>/dev/null; then
+        echo "Rank ${RANK} stopping perf"
+        kill -INT "$PERF_PID"
+    fi
+    if ! wait "$PERF_PID"; then
+        echo "Rank ${RANK} perf exited with an error" >&2
+    fi
 fi
 
 echo "Rank ${RANK} done"
-sleep 15 
+sleep 15
 
 # apt-get update && apt-get install -y libatomic1 libelf-dev libdw-dev libslang2-dev libperl-dev python3-dev libnuma-dev libtraceevent-dev
 # apt-get install -y \
@@ -234,13 +243,13 @@ sleep 15
 
 # # NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" ./bin/milvus run standalone > /workerOut/standalone.txt 2>&1 &
 # NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" \
-#  /perfDir/perf record  -F 99 -g --call-graph fp --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone > /workerOut/standalone.txt 2>&1 &
+#  /runtime_state/perf record  -F 99 -g --call-graph fp --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone > /workerOut/standalone.txt 2>&1 &
 # # NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" \
-# # /perfDir/perf record  -F 99 -g --call-graph fp --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone > /workerOut/standalone.txt 2>&1 &
+# # /runtime_state/perf record  -F 99 -g --call-graph fp --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone > /workerOut/standalone.txt 2>&1 &
 
 # NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" \
-#  /perfDir/perf record  -F 99 -g --no-buildid-cache --call-graph dwarf --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone > /workerOut/standalone.txt 2>&1 &
-# # /perfDir/perf probe -x milvus -F > probe.txt
+#  /runtime_state/perf record  -F 99 -g --no-buildid-cache --call-graph dwarf --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone > /workerOut/standalone.txt 2>&1 &
+# # /runtime_state/perf probe -x milvus -F > probe.txt
 
 # while true; do
 #   if [ -f /workerOut/stop.txt ]; then
@@ -252,11 +261,11 @@ sleep 15
 
 #     sleep 60
 #     exit
-  
+
 #   fi
 
 # done
 
-# /perfDir/perf record -F 99 --call-graph dwarf -g --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone &
+# /runtime_state/perf record -F 99 --call-graph dwarf -g --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone &
 # & > /workerOut/standalone.txt 2>&1 &
-# /perfDir/perf record -F 99 --call-graph dwarf -g --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone  > /workerOut/standalone.txt 2>&1 
+# /runtime_state/perf record -F 99 --call-graph dwarf -g --proc-map-timeout 5000 -o /workerOut/perf.data -- ./bin/milvus run standalone  > /workerOut/standalone.txt 2>&1

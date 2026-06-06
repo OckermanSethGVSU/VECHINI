@@ -15,3 +15,11 @@ directory, so avoid names used by the workflow, including:
 - `workflow_start.txt`
 - `workflow_end.txt`
 - `flag.txt`
+
+To enable Linux perf collection, place an executable named `perf` here and set:
+
+- `PERF=STAT` for hardware-counter statistics
+- `PERF=RECORD` for sampled call-graph data
+
+This PBS profiling path invokes the executable inside the container as `/runtime_state/perf`. Output is
+written back into this directory as `perf<RANK>.data`.
