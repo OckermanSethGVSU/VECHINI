@@ -17,7 +17,8 @@
 register_weaviate_var "WORKERS_PER_NODE" "default" "1" "" "Worker processes launched per compute node"
 
 # Engine/runtime selection
-register_weaviate_var "USEPERF" "default" "false" "true false" "Enable perf collection"
+register_weaviate_var "PERF" "default" "NONE" "NONE STAT RECORD" "Performance collection mode"
+register_weaviate_var "PERF_EVENTS" "default" "cycles,instructions,topdown-be-bound,topdown-mem-bound,topdown-retiring" "" "Comma-separated perf stat events"
 register_weaviate_var "WEAVIATE_SIF" "conditional" "" "" "Weaviate SIF filename under weaviate/sifs, for example weaviate_1.36.0.sif" "RUN_MODE=PBS"
 register_weaviate_var "ALLOW_REMOTE_WEAVIATE_IMAGE" "default" "false" "true false" "Allow PBS runs to skip staging a local Weaviate SIF and pull WEAVIATE_IMAGE_URI at runtime"
 register_weaviate_var "DEBUG" "default" "false" "true false" "Enable verbose client debug logging"

@@ -47,7 +47,7 @@ export N_WORKERS=$TOTAL
 mkdir -p "$RUN_DIR/runtime_state"
 cd "$RUN_DIR"
 
-./launchWeaviateNodeLocal.sh "$STORAGE_MEDIUM" "${USEPERF:-false}" "$TOTAL" &
+./launchWeaviateNodeLocal.sh "$STORAGE_MEDIUM" "$TOTAL" &
 LAUNCH_PID=$!
 
 echo "[INFO] Waiting for ${TOTAL} local Weaviate worker to become ready..."

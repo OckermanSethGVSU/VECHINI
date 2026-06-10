@@ -107,9 +107,42 @@ engine_load_combo() {
     REQUIRES_DAOS="false"
 }
 
+weaviate_perf_enabled() {
+    [[ "${PERF^^}" == "STAT" || "${PERF^^}" == "RECORD" ]]
+}
+
+weaviate_validate_perf_payload() {
+    local perf_path="$ENGINE_DIR/runtime_state/perf"
+
+    weaviate_perf_enabled || return 0
+
+    if [[ "${RUN_MODE^^}" != "PBS" ]]; then
+        echo "Weaviate PERF=$PERF is supported only for RUN_MODE=PBS." >&2
+        return 1
+    fi
+    if [[ "$TASK" == "MIXED" ]]; then
+        echo "Weaviate PERF=$PERF does not support TASK=MIXED because the mixed client does not emit workflow markers." >&2
+        return 1
+    fi
+    if [[ ! -f "$perf_path" ]]; then
+        echo "Weaviate PERF=$PERF requires a staged perf executable at $perf_path" >&2
+        return 1
+    fi
+    if [[ ! -x "$perf_path" ]]; then
+        echo "Weaviate perf payload is not executable: $perf_path" >&2
+        return 1
+    fi
+    if [[ ! -d "$ENGINE_DIR/runtime_state/perf-libs" ]]; then
+        echo "Weaviate PERF=$PERF requires runtime libraries at $ENGINE_DIR/runtime_state/perf-libs" >&2
+        echo "Run $ENGINE_DIR/utils/build_perf_container.sh first." >&2
+        return 1
+    fi
+}
+
 # Validate a loaded combo after sweep expansion.
 engine_validate_combo() {
     schema_validate_current_values "$ENGINE_SCHEMA_PREFIX" || return 1
+    weaviate_validate_perf_payload
 }
 
 # Build the Weaviate run directory name for the loaded combo.
@@ -147,6 +180,9 @@ engine_copy_payload() {
     local batch_client_src_dir="$ENGINE_DIR/clients/batch_client"
     local mixed_client_src_dir="$ENGINE_DIR/clients/mixed"
 
+    weaviate_validate_perf_payload || return 1
+    copy_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state" || return 1
+
     copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" \
         "health_check.py" \
         "create_basic_collection.py" \
@@ -180,6 +216,7 @@ engine_copy_payload() {
         fi
         copy_engine_items "$ENGINE_DIR/weaviateSetup" "$target_dir" \
             "launchWeaviateNode.sh" \
+            "runWeaviate.sh" \
             "mapping.py"
     fi
 

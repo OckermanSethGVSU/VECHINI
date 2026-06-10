@@ -246,6 +246,12 @@ fn parse_active_task(raw: &str) -> anyhow::Result<ActiveTask> {
     }
 }
 
+fn should_mark_workflow(task: ActiveTask) -> bool {
+    env::var("TASK")
+        .map(|value| value.trim().eq_ignore_ascii_case(task.as_env_prefix()))
+        .unwrap_or(true)
+}
+
 fn load_config() -> anyhow::Result<RunConfig> {
     // Build the run configuration entirely from environment variables so the binary can be
     // launched from the existing shell scripts without changing its CLI.
@@ -848,7 +854,8 @@ async fn run_upload(
     let mut elapsed_op_times = Vec::new();
     let mut elapsed_count_times = Vec::new();
 
-    if rank == 0 {
+    let mark_workflow = should_mark_workflow(task);
+    if mark_workflow && rank == 0 {
         let workflow_start = runtime_state_path("workflow_start.txt");
         File::create(&workflow_start)
             .with_context(|| format!("failed to create runtime state marker {workflow_start}"))?;
@@ -916,7 +923,7 @@ async fn run_upload(
     let searchable = Instant::now();
     let global_end = Utc::now();
 
-    if rank == 0 {
+    if mark_workflow && rank == 0 {
         let workflow_stop = runtime_state_path("workflow_stop.txt");
         File::create(&workflow_stop)
             .with_context(|| format!("failed to create runtime state marker {workflow_stop}"))?;
@@ -1055,6 +1062,13 @@ async fn run_query(
     let mut query_result_ids = Array2::from_elem((view.dim().0, top_k), -1_i64);
     let search_params = SearchParamsBuilder::default().hnsw_ef(ef_search).build();
 
+    let mark_workflow = should_mark_workflow(task);
+    if mark_workflow && rank == 0 {
+        let workflow_start = runtime_state_path("workflow_start.txt");
+        File::create(&workflow_start)
+            .with_context(|| format!("failed to create runtime state marker {workflow_start}"))?;
+        sleep(Duration::from_secs(3)).await;
+    }
     barrier.wait().await;
 
     let start = Utc::now();
@@ -1155,6 +1169,13 @@ async fn run_query(
     let searchable = Instant::now();
     let global_end = Utc::now();
 
+    if mark_workflow && rank == 0 {
+        let workflow_stop = runtime_state_path("workflow_stop.txt");
+        File::create(&workflow_stop)
+            .with_context(|| format!("failed to create runtime state marker {workflow_stop}"))?;
+        sleep(Duration::from_secs(3)).await;
+    }
+
     let files = time_files(task);
     if rank == 0 {
         write_query_header(&files.csv, &lock).await?;
@@ -1213,7 +1234,8 @@ async fn run_upload_streaming(
     let mut elapsed_op_times = Vec::new();
     let mut elapsed_count_times = Vec::new();
 
-    if rank == 0 {
+    let mark_workflow = should_mark_workflow(task);
+    if mark_workflow && rank == 0 {
         let workflow_start = runtime_state_path("workflow_start.txt");
         File::create(&workflow_start)
             .with_context(|| format!("failed to create runtime state marker {workflow_start}"))?;
@@ -1286,7 +1308,7 @@ async fn run_upload_streaming(
     let searchable = Instant::now();
     let global_end = Utc::now();
 
-    if rank == 0 {
+    if mark_workflow && rank == 0 {
         let workflow_stop = runtime_state_path("workflow_stop.txt");
         File::create(&workflow_stop)
             .with_context(|| format!("failed to create runtime state marker {workflow_stop}"))?;
@@ -1372,6 +1394,13 @@ async fn run_query_streaming(
     let mut query_result_ids = Array2::from_elem((end_slice - start_slice, top_k), -1_i64);
     let search_params = SearchParamsBuilder::default().hnsw_ef(ef_search).build();
 
+    let mark_workflow = should_mark_workflow(task);
+    if mark_workflow && rank == 0 {
+        let workflow_start = runtime_state_path("workflow_start.txt");
+        File::create(&workflow_start)
+            .with_context(|| format!("failed to create runtime state marker {workflow_start}"))?;
+        sleep(Duration::from_secs(3)).await;
+    }
     barrier.wait().await;
 
     let start = Utc::now();
@@ -1481,6 +1510,13 @@ async fn run_query_streaming(
     barrier.wait().await;
     let searchable = Instant::now();
     let global_end = Utc::now();
+
+    if mark_workflow && rank == 0 {
+        let workflow_stop = runtime_state_path("workflow_stop.txt");
+        File::create(&workflow_stop)
+            .with_context(|| format!("failed to create runtime state marker {workflow_stop}"))?;
+        sleep(Duration::from_secs(3)).await;
+    }
 
     let files = time_files(task);
     if rank == 0 {

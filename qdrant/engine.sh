@@ -132,9 +132,29 @@ engine_load_combo() {
     REQUIRES_DAOS="false"
 }
 
+qdrant_perf_enabled() {
+    [[ "${PERF^^}" == "STAT" || "${PERF^^}" == "RECORD" ]]
+}
+
+qdrant_validate_perf_payload() {
+    local perf_path="$ENGINE_DIR/runtime_state/perf"
+
+    qdrant_perf_enabled || return 0
+
+    if [[ ! -f "$perf_path" ]]; then
+        echo "Qdrant PERF=$PERF requires a staged perf executable at $perf_path" >&2
+        return 1
+    fi
+    if [[ ! -x "$perf_path" ]]; then
+        echo "Qdrant perf payload is not executable: $perf_path" >&2
+        return 1
+    fi
+}
+
 # Validate a loaded combo after sweep expansion.
 engine_validate_combo() {
     schema_validate_current_values "$ENGINE_SCHEMA_PREFIX"
+    qdrant_validate_perf_payload
 }
 
 # Build the Qdrant run directory name for the loaded combo.
@@ -168,10 +188,9 @@ engine_emit_runtime_env() {
 engine_copy_payload() {
     local target_dir="$1"
 
-    mkdir -p "$target_dir/rustSrc" "$target_dir/runtime_state"
-    if [[ -d "$ENGINE_DIR/runtime_state" ]]; then
-        copy_optional_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state"
-    fi
+    mkdir -p "$target_dir/rustSrc"
+    qdrant_validate_perf_payload || return 1
+    copy_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state" || return 1
 
     if [[ "${RUN_MODE^^}" == "LOCAL" ]]; then
         copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" "batch_client"

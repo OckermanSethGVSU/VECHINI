@@ -55,7 +55,7 @@ register_qdrant_var "EXPECTED_CORPUS_SIZE" "default" "10000000" "" "Expected cor
 
 
 # Profiling
-register_qdrant_var "PERF" "default" "NONE" "NONE STAT TRACE" "Performance collection mode"
+register_qdrant_var "PERF" "default" "NONE" "NONE STAT RECORD" "Performance collection mode"
 register_qdrant_var "PERF_EVENTS" "default" "topdown-be-bound,topdown-mem-bound,topdown-retiring,topdown-fe-bound,topdown-bad-spec" "" "Comma-separated perf stat events"
 register_qdrant_var "INSERT_TRACE" "default" "" "" "Optional insert trace file or mode"
 register_qdrant_var "QUERY_TRACE" "default" "" "" "Optional query trace file or mode"

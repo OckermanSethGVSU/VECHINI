@@ -1,11 +1,10 @@
 #!/bin/bash
 
 # Usage:
-#   ./launchWeaviateNode.sh <storage_medium> <useperf> <total>
+#   ./launchWeaviateNode.sh <storage_medium> <total>
 
-STORAGE_MEDIUM=${1:?Usage: $0 <storage_medium> <useperf> <total>}
-USEPERF=${2:?Usage: $0 <storage_medium> <useperf> <total>}
-TOTAL=${3:-${PMI_SIZE:-${OMPI_COMM_WORLD_SIZE:-${MV2_COMM_WORLD_SIZE:-${PMIX_SIZE:-}}}}}
+STORAGE_MEDIUM=${1:?Usage: $0 <storage_medium> <total>}
+TOTAL=${2:-${PMI_SIZE:-${OMPI_COMM_WORLD_SIZE:-${MV2_COMM_WORLD_SIZE:-${PMIX_SIZE:-}}}}}
 RANK="${PMI_RANK:-${PMIX_RANK:-${OMPI_COMM_WORLD_RANK:-${MV2_COMM_WORLD_RANK:-${SLURM_PROCID:-}}}}}"
 
 if [[ -z "${RANK}" ]]; then
@@ -154,6 +153,13 @@ COMMON_ARGS=(
     --fakeroot
     --writable-tmpfs
     -B "${TARGET_BASE}/node${RANK}:/var/lib/weaviate"
+    -B "./runtime_state:/runtime_state"
+    -B "./runWeaviate.sh:/runWeaviate.sh:ro"
+
+    --env PERF="${PERF}"
+    --env PERF_EVENTS="${PERF_EVENTS}"
+    --env PERF_RANK="${RANK}"
+    --env RUNTIME_STATE_DIR=/runtime_state
 
     --env AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
     --env PERSISTENCE_DATA_PATH=/var/lib/weaviate
@@ -218,6 +224,9 @@ WEAVIATE_CMD=(
 )
 
 READY_TIMEOUT_SEC="${WEAVIATE_READY_TIMEOUT_SEC:-30}"
+if [[ "$PERF" == "STAT" || "$PERF" == "RECORD" ]]; then
+    READY_TIMEOUT_SEC="${WEAVIATE_READY_TIMEOUT_SEC:-600}"
+fi
 LAUNCH_RETRIES="${WEAVIATE_LAUNCH_RETRIES:-3}"
 RETRY_BACKOFF_SEC="${WEAVIATE_RETRY_BACKOFF_SEC:-5}"
 
@@ -275,7 +284,7 @@ launch_weaviate_with_retries() {
                 "${APPTAINER_ARGS[@]}" \
                 --env RAFT_BOOTSTRAP_EXPECT=1 \
                 "${IMAGE}" \
-                "${WEAVIATE_CMD[@]}" \
+                /bin/sh /runWeaviate.sh "${WEAVIATE_CMD[@]}" \
                 > "rank${RANK}.out" 2>&1 &
         else
             apptainer exec \
@@ -283,7 +292,7 @@ launch_weaviate_with_retries() {
                 "${APPTAINER_ARGS[@]}" \
                 --env CLUSTER_JOIN="${BOOTSTRAP_IP}:${BOOTSTRAP_GOSSIP_PORT}" \
                 "${IMAGE}" \
-                "${WEAVIATE_CMD[@]}" \
+                /bin/sh /runWeaviate.sh "${WEAVIATE_CMD[@]}" \
                 > "rank${RANK}.out" 2>&1 &
         fi
         LAUNCH_PID=$!

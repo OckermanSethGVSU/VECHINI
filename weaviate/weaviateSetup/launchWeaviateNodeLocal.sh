@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STORAGE_MEDIUM=${1:?Usage: $0 <storage_medium> <useperf> <total>}
-USEPERF=${2:?Usage: $0 <storage_medium> <useperf> <total>}
-TOTAL=${3:-1}
+STORAGE_MEDIUM=${1:?Usage: $0 <storage_medium> <total>}
+TOTAL=${2:-1}
 RANK=0
 NODE_NAME="local-node${RANK}"
 

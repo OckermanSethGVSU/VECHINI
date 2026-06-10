@@ -1,8 +1,16 @@
 #!/bin/bash
 
-if [[ "$PERF" == "STAT" || "$PERF" == "TRACE" ]]; then
-    apt-get update && apt-get install -y libatomic1 libelf-dev libdw-dev libslang2-dev libperl-dev python3-dev libnuma-dev libtraceevent-dev curl
-    export PATH="/runtime_state/:$PATH"
+RUNTIME_STATE_DIR="${RUNTIME_STATE_DIR:-/runtime_state}"
+PERF_BIN="${PERF_BIN:-$RUNTIME_STATE_DIR/perf}"
+DEFAULT_PERF_STAT_EVENTS="cycles,instructions,branches,branch-misses,cache-misses"
+
+if [[ "$PERF" == "STAT" || "$PERF" == "RECORD" ]]; then
+    if [[ ! -x "$PERF_BIN" ]]; then
+        echo "Perf mode $PERF requires an executable at $PERF_BIN" >&2
+        exit 1
+    fi
+    apt-get update && apt-get install -y libatomic1 zlib1g-dev libzstd-dev liblzma-dev libelf-dev libdw-dev libslang2-dev libnuma-dev libtraceevent-dev curl
+    export PATH="$RUNTIME_STATE_DIR:$PATH"
 fi
 
 healthcheck() {
@@ -131,16 +139,15 @@ while [ ! -e "$TARGET" ]; do
 done
 
 
-if [[ "$PERF" == "TRACE" ]]; then
+if [[ "$PERF" == "RECORD" ]]; then
     echo "Rank ${RANK} Launching perf record"
-    /runtime_state/perf record -F 99 --call-graph fp -g --proc-map-timeout 5000 -o /runtime_state/perf${RANK}.data  -p "$QDRANT_PID" &
+    "$PERF_BIN" record -F 99 --call-graph fp -g --proc-map-timeout 5000 -o "$RUNTIME_STATE_DIR/perf${RANK}.data" -p "$QDRANT_PID" &
     PERF_PID=$!
 
 elif [[ "$PERF" == "STAT" ]]; then
     echo "Rank ${RANK} Launching perf stat"
-    DEFAULT_PERF_STAT_EVENTS="cycles,instructions,branches,branch-misses,cache-misses"
     PERF_STAT_EVENTS="${PERF_EVENTS:-$DEFAULT_PERF_STAT_EVENTS}"
-    /runtime_state/perf stat  -e "$PERF_STAT_EVENTS" -o /runtime_state/perf${RANK}.data  -p "$QDRANT_PID" &
+    "$PERF_BIN" stat -e "$PERF_STAT_EVENTS" -o "$RUNTIME_STATE_DIR/perf${RANK}.data" -p "$QDRANT_PID" &
     PERF_PID=$!
 fi
 
@@ -152,10 +159,14 @@ while [ ! -e "$TARGET" ]; do
 done
 
 # stop perf cleanly (same as Ctrl-C)
-if [[ "$PERF" == "TRACE" || "$PERF" == "STAT" ]]; then
-    echo "Rank ${RANK} stopping perf"
-    kill -INT "$PERF_PID"
-    wait "$PERF_PID"
+if [[ "$PERF" == "RECORD" || "$PERF" == "STAT" ]]; then
+    if kill -0 "$PERF_PID" 2>/dev/null; then
+        echo "Rank ${RANK} stopping perf"
+        kill -INT "$PERF_PID"
+    fi
+    if ! wait "$PERF_PID"; then
+        echo "Rank ${RANK} perf exited with an error" >&2
+    fi
 fi
 
 

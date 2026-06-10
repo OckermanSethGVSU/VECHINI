@@ -47,6 +47,9 @@ def mark_perf_event(filename):
 def is_mixed_task():
     return os.getenv("TASK", "").strip().lower() == "mixed"
 
+def should_mark_index_workflow():
+    return os.getenv("TASK", "").strip().lower() in {"index", "mixed"}
+
 
 def env_int(name, default):
     value = os.getenv(name)
@@ -89,8 +92,10 @@ def main():
     print(info, flush=True)
     print("**************************************************************************", flush=True)
     # re-enable graph and time rebuild
-    mark_perf_event("workflow_start.txt")
-    time.sleep(5)
+    mark_workflow = should_mark_index_workflow()
+    if mark_workflow:
+        mark_perf_event("workflow_start.txt")
+        time.sleep(5)
     
     t1 = time.time()
     client.update_collection(
@@ -103,7 +108,8 @@ def main():
         info = client.get_collection(collection_name)
         if info.status == models.CollectionStatus.GREEN:
             t2 = time.time()
-            mark_perf_event("workflow_stop.txt")
+            if mark_workflow:
+                mark_perf_event("workflow_stop.txt")
             break
         time.sleep(0.01)
 

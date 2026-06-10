@@ -47,6 +47,8 @@ fi
 
 echo "[INFO] Using run directory: $RUN_DIR"
 cd "$RUN_DIR"
+rm -f ./runtime_state/workflow_start.txt ./runtime_state/workflow_end.txt \
+    ./runtime_state/weaviate_running*.txt ./runtime_state/flag.txt
 
 
 if [[ "$PLATFORM" == "POLARIS" ]]; then
@@ -96,13 +98,13 @@ if [[ -z "${CORES:-}" ]]; then
     echo "Launching Weaviate without CPU binding"
     mpirun -n $TOTAL --ppn $WORKERS_PER_NODE --no-vni \
      --cpu-bind none --host "$WORKER_HOSTS" \
-    ./launchWeaviateNode.sh $STORAGE_MEDIUM $USEPERF $TOTAL &
+    ./launchWeaviateNode.sh "$STORAGE_MEDIUM" "$TOTAL" &
     
 else
     echo "Binding Weaviate bound to $CORES cores each. ${TOTAL} workers, ${WORKERS_PER_NODE} workers per node. ${CORES} split among each node's workers."
     mpirun -n $TOTAL --ppn $WORKERS_PER_NODE --no-vni \
      --cpu-bind depth -d $CORES --host "$WORKER_HOSTS" \
-    ./launchWeaviateNode.sh $STORAGE_MEDIUM $USEPERF $TOTAL &
+    ./launchWeaviateNode.sh "$STORAGE_MEDIUM" "$TOTAL" &
 fi
 MPI_PID=$!
 

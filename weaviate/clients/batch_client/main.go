@@ -1332,6 +1332,7 @@ func clientWorker(
 					log.Fatalf("failed to create file: %v", err)
 				}
 				file.Close()
+				time.Sleep(3 * time.Second)
 				startGate.Open()
 			}
 		}
