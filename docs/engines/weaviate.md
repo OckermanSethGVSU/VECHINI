@@ -5,11 +5,11 @@ Weaviate is an active engine in the unified submit workflow and supports both
 
 ## Main Files
 
-- [weaviate/engine.sh](/home/seth/Documents/research/SCVectorDB/weaviate/engine.sh)
-- [weaviate/schema.sh](/home/seth/Documents/research/SCVectorDB/weaviate/schema.sh)
-- [weaviate/main.sh](/home/seth/Documents/research/SCVectorDB/weaviate/main.sh)
-- [weaviate/local_main.sh](/home/seth/Documents/research/SCVectorDB/weaviate/local_main.sh)
-- [weaviate/scripts/create_basic_collection.py](/home/seth/Documents/research/SCVectorDB/weaviate/scripts/create_basic_collection.py)
+- [weaviate/engine.sh](../../weaviate/engine.sh)
+- [weaviate/schema.sh](../../weaviate/schema.sh)
+- [weaviate/main.sh](../../weaviate/main.sh)
+- [weaviate/local_main.sh](../../weaviate/local_main.sh)
+- [weaviate/scripts/create_basic_collection.py](../../weaviate/scripts/create_basic_collection.py)
 
 ## Active Tasks
 

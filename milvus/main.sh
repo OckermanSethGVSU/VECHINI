@@ -91,7 +91,10 @@ compute_local_shared_storage_path() {
             printf '%s/%s/localfs-shared\n' "$BASE_DIR" "$myDIR"
             ;;
         DAOS)
-            printf '/tmp/radix-io/vectorDBTesting/%s/localfs-shared\n' "$myDIR"
+            printf '/tmp/%s/%s/%s/localfs-shared\n' \
+                "${DAOS_PROJECT:?DAOS_PROJECT is required when STORAGE_MEDIUM=DAOS}" \
+                "${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}" \
+                "$myDIR"
             ;;
         *)
             echo "DISTRIBUTED MINIO_MODE=off requires a shared STORAGE_MEDIUM; unsupported STORAGE_MEDIUM='$STORAGE_MEDIUM'." >&2
@@ -175,8 +178,8 @@ resolve_mixed_insert_start_id
 if [[ "$STORAGE_MEDIUM" == "DAOS" || "$ETCD_MEDIUM" == "DAOS" || ( "$MODE" == "DISTRIBUTED" && "$MINIO_MEDIUM" == "DAOS" ) ]]; then
     module use /soft/modulefiles
     module load daos
-    DAOS_POOL="radix-io"
-    DAOS_CONT="vectorDBTesting"
+    DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when a Milvus storage medium uses DAOS}"
+    DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when a Milvus storage medium uses DAOS}"
 
     launch-dfuse.sh ${DAOS_POOL}:${DAOS_CONT}
     mkdir -p /tmp/${DAOS_POOL}/${DAOS_CONT}/$myDIR
@@ -493,8 +496,8 @@ fi
 
 if [[ "${AUTO_CLEANUP}" ]]; then
     if [[ "$STORAGE_MEDIUM" == "DAOS" || "$ETCD_MEDIUM" == "DAOS" || "$MINIO_MEDIUM" == "DAOS" ]]; then
-        DAOS_POOL="radix-io"
-        DAOS_CONT="vectorDBTesting"
+        DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when a Milvus storage medium uses DAOS}"
+        DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when a Milvus storage medium uses DAOS}"
         rm -fr /tmp/${DAOS_POOL}/${DAOS_CONT}/$myDIR
     elif [[ "$STORAGE_MEDIUM" == "lustre" || "$MODE" == "DISTRIBUTED" ]]; then
         rm -fr ./milvusDir/

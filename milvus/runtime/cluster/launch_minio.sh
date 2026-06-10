@@ -15,19 +15,10 @@ if [[ "$STORAGE_MEDIUM" == "memory" ]]; then
 
 DAOS_ARGS=()
 elif [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
-    DAOS_POOL="radix-io"
-    DAOS_CONT="vectorDBTesting"
+    DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when STORAGE_MEDIUM=DAOS}"
+    DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}"
     TARGET_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/milvusDir"
     (( RANK == 0 )) && echo "Minio using DAOS for persistence"
-    # DAOS_ARGS+=(
-    #     --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-    #     --bind "/run:/run"
-    #     --bind "/usr/lib64/libstdc++.so.6:/opt/hostlibs/libstdc++.so.6:ro"
-    #     --env LD_LIBRARY_PATH=/opt/hostlibs:/opt/daos/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-    #     --env LD_PRELOAD=/opt/daos/lib64/libpil4dfs.so${LD_PRELOAD:+:$LD_PRELOAD}
-    #     --env NA_PLUGIN_PATH="/opt/daos/lib64/mercury"
-    #     --env FI_PROVIDER_PATH="/opt/daos/lib64/libfabric"
-    # )
 
 
 elif [[ "$STORAGE_MEDIUM" == "lustre" ]]; then

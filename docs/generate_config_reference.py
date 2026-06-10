@@ -119,8 +119,7 @@ def format_notes(var: SchemaVar) -> str:
 
 
 def format_source_link(label: str) -> str:
-    target = REPO_ROOT / label
-    return f"[{label}]({target})"
+    return f"[{label}](../{label})"
 
 
 def render_section(section: dict[str, object]) -> str:

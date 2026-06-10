@@ -64,8 +64,8 @@ elif [[ "$PLATFORM" == "AURORA" ]]; then
     module load frameworks
 
     if [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
-        DAOS_POOL="radix-io"
-        DAOS_CONT="vectorDBTesting"
+        DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when STORAGE_MEDIUM=DAOS}"
+        DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}"
         module use /soft/modulefiles
         module load daos
         

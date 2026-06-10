@@ -68,6 +68,13 @@ engine_apply_overrides() {
 engine_validate_config() {
     schema_validate_current_values "$ENGINE_SCHEMA_PREFIX"
 
+    if [[ "$ETCD_MEDIUM" == "DAOS" || ( "$MODE" == "DISTRIBUTED" && "$MINIO_MEDIUM" == "DAOS" ) ]]; then
+        if [[ -z "${DAOS_PROJECT:-}" || -z "${DAOS_CONTAINER:-}" ]]; then
+            echo "Milvus variables 'DAOS_PROJECT' and 'DAOS_CONTAINER' are required when any Milvus storage medium uses DAOS." >&2
+            return 1
+        fi
+    fi
+
     if [[ "${RUN_MODE^^}" == "PBS" && -z "${ENV_PATH:-}" && "${ALLOW_SYSTEM_PYTHON:-False}" != "True" ]]; then
         cat >&2 <<'EOF'
 Milvus PBS runs require ENV_PATH by default so the Python environment is explicit.
@@ -152,6 +159,12 @@ engine_load_combo() {
 
 engine_validate_combo() {
     schema_validate_current_values "$ENGINE_SCHEMA_PREFIX"
+    if [[ "$STORAGE_MEDIUM" == "DAOS" || "$ETCD_MEDIUM" == "DAOS" || ( "$MODE" == "DISTRIBUTED" && "$MINIO_MEDIUM" == "DAOS" ) ]]; then
+        if [[ -z "${DAOS_PROJECT:-}" || -z "${DAOS_CONTAINER:-}" ]]; then
+            echo "Milvus variables 'DAOS_PROJECT' and 'DAOS_CONTAINER' are required when any Milvus storage medium uses DAOS." >&2
+            return 1
+        fi
+    fi
     validate_programmatic_submit_config "$NODES_CURRENT" "$CORES_CURRENT" "$INSERT_BATCH_CURRENT" "$QUERY_BATCH_CURRENT"
 }
 

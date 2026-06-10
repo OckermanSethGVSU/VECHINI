@@ -16,14 +16,10 @@ if [[ "$STORAGE_MEDIUM" == "memory" ]]; then
 
 DAOS_ARGS=()
 elif [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
-    DAOS_POOL="radix-io"
-    DAOS_CONT="vectorDBTesting"
+    DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when STORAGE_MEDIUM=DAOS}"
+    DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}"
     TARGET_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/milvusDir"
     (( RANK == 0 )) && echo "Milvus is using DAOS storage"
-    APPTAINER_ARGS+=(
-        --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-        --env LD_LIBRARY_PATH=/opt/daos/lib64
-    )
 
 
 elif [[ "$STORAGE_MEDIUM" == "lustre" ]]; then
@@ -44,18 +40,12 @@ case "$ETCD_MEDIUM" in
         (( RANK == 0 )) && echo "ETCD using memory for storage"
         ;;
     DAOS)
-        DAOS_POOL="radix-io"
-        DAOS_CONT="vectorDBTesting"
+        DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when ETCD_MEDIUM=DAOS}"
+        DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when ETCD_MEDIUM=DAOS}"
         ETCD_HOST_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/etcdDir"
         mkdir -p "$ETCD_HOST_BASE"
         ETCD_DATA_DIR="/etcd-data/etcd"
         ETCD_BIND_ARGS+=(-B "${ETCD_HOST_BASE}:/etcd-data")
-        if [[ "$STORAGE_MEDIUM" != "DAOS" ]]; then
-            APPTAINER_ARGS+=(
-                --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-                --env LD_LIBRARY_PATH=/opt/daos/lib64
-            )
-        fi
         (( RANK == 0 )) && echo "ETCD using DAOS for storage"
         ;;
     lustre)
@@ -98,7 +88,6 @@ if [[ "$PLATFORM" == "AURORA" ]]; then
 elif [[ "$PLATFORM" == "POLARIS" ]]; then
     base=$BASE_DIR
     POLARIS_BINDS+=(
-        -B "/eagle/projects/argonne_tpc/sockerman/buildingFromSource/gpuMilvus/cuda-merged:/usr/local/cuda:ro"
         -B "/opt/nvidia/hpc_sdk:/opt/nvidia/hpc_sdk:ro"
         --env PLATFORM=POLARIS
     )
@@ -245,7 +234,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 #     --env MILVUS_BUILD_DIR=$MILVUS_BUILD_DIR \
 #     -B ./execute.sh:/milvus/app_execute.sh \
 #     -B ./configs/:/milvus/configs/ \
-#     -B /lus/flare/projects/radix-io/sockerman/temp/milvus/cpuMilvus/:/milvus/ \
 #     -B /usr/lib64/libatomic.so.1:/usr/lib64/libatomic.so.1 \
 #     milvus.sif
 
@@ -253,7 +241,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 
 
 
-# cudaPath="/eagle/projects/argonne_tpc/sockerman/buildingFromSource/gpuMilvus"
 # apptainer shell --no-home --fakeroot --writable-tmpfs --nv \
 #     --pwd /milvus \
 #     --env MILVUSCONF=/milvus/configs/ \
@@ -270,7 +257,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 #     milvus.sif 
 
     # -B ${base}/milvus/:/milvus/ \
-    # -B ${cudaPath}/cuda-merged:/usr/local/cuda:ro \
     # -B /opt/nvidia/hpc_sdk:/opt/nvidia/hpc_sdk:ro \
 
 
@@ -278,7 +264,6 @@ apptainer exec --no-home --fakeroot --writable-tmpfs --nv \
 # COMMON_STORAGETYPE=local -> store on local disk rather than sending data to remote (minio)
 
 
-# base="/eagle/projects/radix-io/sockerman/vectorEval/milvus/singleWorker"
 # apptainer shell --no-home --fakeroot --writable-tmpfs \
 # --env MILVUSCONF=/milvus/configs/ \
 # --env ETCD_USE_EMBED=true \

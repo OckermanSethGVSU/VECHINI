@@ -129,7 +129,11 @@ engine_load_combo() {
     CORES_CURRENT="$CORES"
     TOTAL_NODES=$((NODES_CURRENT + 1))
     JOB_NAME="${TASK,,}_${NODES_CURRENT}n_${WORKERS_PER_NODE_CURRENT}w_$(qdrant_cores_label)c_q${QUERY_BATCH_CURRENT}"
-    REQUIRES_DAOS="false"
+    if [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
+        REQUIRES_DAOS="true"
+    else
+        REQUIRES_DAOS="false"
+    fi
 }
 
 qdrant_perf_enabled() {

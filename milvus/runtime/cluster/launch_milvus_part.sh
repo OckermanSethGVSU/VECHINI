@@ -12,14 +12,9 @@ if [[ "$STORAGE_MEDIUM" == "memory" ]]; then
 
 DAOS_ARGS=()
 elif [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then
-    DAOS_POOL="radix-io"
-    DAOS_CONT="vectorDBTesting"
+    DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when STORAGE_MEDIUM=DAOS}"
+    DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when STORAGE_MEDIUM=DAOS}"
     TARGET_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/milvusDir"
-    
-    APPTAINER_ARGS+=(
-        --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-        --env LD_LIBRARY_PATH=/opt/daos/lib64
-    )
 
 elif [[ "$STORAGE_MEDIUM" == "lustre" ]]; then
     TARGET_BASE="./milvusDir"
@@ -97,7 +92,6 @@ base=${BASE_DIR}
 POLARIS_BINDS=()
 if [[ "$PLATFORM" == "POLARIS" ]]; then
     POLARIS_BINDS+=(
-        -B "/eagle/projects/argonne_tpc/sockerman/buildingFromSource/gpuMilvus/cuda-merged:/usr/local/cuda:ro"
         -B "/opt/nvidia/hpc_sdk:/opt/nvidia/hpc_sdk:ro"
         --env PLATFORM=POLARIS
     )

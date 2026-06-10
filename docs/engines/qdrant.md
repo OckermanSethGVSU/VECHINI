@@ -5,10 +5,10 @@ Qdrant is an active engine in the unified submit workflow and supports both
 
 ## Main Files
 
-- [qdrant/engine.sh](/home/seth/Documents/research/SCVectorDB/qdrant/engine.sh)
-- [qdrant/schema.sh](/home/seth/Documents/research/SCVectorDB/qdrant/schema.sh)
-- [qdrant/main.sh](/home/seth/Documents/research/SCVectorDB/qdrant/main.sh)
-- [qdrant/local_main.sh](/home/seth/Documents/research/SCVectorDB/qdrant/local_main.sh)
+- [qdrant/engine.sh](../../qdrant/engine.sh)
+- [qdrant/schema.sh](../../qdrant/schema.sh)
+- [qdrant/main.sh](../../qdrant/main.sh)
+- [qdrant/local_main.sh](../../qdrant/local_main.sh)
 
 ## Active Tasks
 

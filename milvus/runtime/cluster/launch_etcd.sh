@@ -13,14 +13,10 @@ if [[ "$ETCD_MEDIUM" == "memory" ]]; then
 
 DAOS_ARGS=()
 elif [[ "$ETCD_MEDIUM" == "DAOS" ]]; then
-    DAOS_POOL="radix-io"
-    DAOS_CONT="vectorDBTesting"
+    DAOS_POOL="${DAOS_PROJECT:?DAOS_PROJECT is required when ETCD_MEDIUM=DAOS}"
+    DAOS_CONT="${DAOS_CONTAINER:?DAOS_CONTAINER is required when ETCD_MEDIUM=DAOS}"
     TARGET_BASE="/tmp/${DAOS_POOL}/${DAOS_CONT}/${myDIR}/milvusDir"
     (( RANK == 0 )) && echo "ETCD using DAOS for persistence"
-    APPTAINER_ARGS+=(
-        --bind "/home/treewalker/daos_lib64:/opt/daos/lib64:ro"
-        --env LD_LIBRARY_PATH=/opt/daos/lib64
-    )
     ETCD_BASE=./milvusDir/
 
 

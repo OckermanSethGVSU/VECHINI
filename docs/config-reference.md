@@ -9,7 +9,7 @@ source of truth.
 
 Source of truth:
 
-- [common/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/common/schema.sh)
+- [common/schema.sh](../common/schema.sh)
 
 - These variables apply across all engines.
 - Some variables are only conditionally required based on `TASK` or `RUN_MODE`.
@@ -23,6 +23,8 @@ Source of truth:
 | `NODES` | required when `RUN_MODE=PBS` | free-form | Compute-node count to allocate for worker ranks |
 | `CORES` | optional | free-form | CPU cores assigned per worker rank; empty disables explicit CPU binding |
 | `STORAGE_MEDIUM` | `memory` | `memory`, `DAOS`, `lustre`, `SSD` | Storage medium for engine data |
+| `DAOS_PROJECT` | required when `STORAGE_MEDIUM=DAOS` | free-form | DAOS project/pool name |
+| `DAOS_CONTAINER` | required when `STORAGE_MEDIUM=DAOS` | free-form | DAOS container name |
 | `ACCOUNT` | required when `RUN_MODE=PBS` | free-form | PBS project/account to charge for the run |
 | `WALLTIME` | required when `RUN_MODE=PBS` | free-form | PBS walltime |
 | `QUEUE` | required when `RUN_MODE=PBS` | free-form | PBS queue name |
@@ -58,7 +60,7 @@ Source of truth:
 
 Source of truth:
 
-- [qdrant/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/qdrant/schema.sh)
+- [qdrant/schema.sh](../qdrant/schema.sh)
 
 - Qdrant-specific behavior may derive additional runtime values from other settings.
 
@@ -97,7 +99,7 @@ Source of truth:
 
 Source of truth:
 
-- [milvus/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/milvus/schema.sh)
+- [milvus/schema.sh](../milvus/schema.sh)
 
 - Milvus-specific runtime behavior may derive storage and topology details automatically.
 
@@ -169,7 +171,7 @@ Source of truth:
 
 Source of truth:
 
-- [weaviate/schema.sh](/lus/flare/projects/radix-io/sockerman/VECHINI/weaviate/schema.sh)
+- [weaviate/schema.sh](../weaviate/schema.sh)
 
 - Weaviate collection creation also depends on `weaviate/scripts/create_basic_collection.py`.
 - When unset, `HNSW_DYNAMIC_THRESHOLD` may be derived from `INSERT_CORPUS_SIZE` or `INSERT_DATA_FILEPATH`.
