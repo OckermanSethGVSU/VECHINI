@@ -72,8 +72,22 @@ Common runtime knobs:
 - `LOG_LEVEL`
 - `VECTOR_DIM`
 - `DISTANCE_METRIC`
+- `QUANTIZATION_TYPE`: `NONE`, `SCALAR`, `BINARY`, `PRODUCT`, or `TURBO`
+- `QUANTIZATION_ALWAYS_RAM`
+- `QUANTIZATION_SCALAR_QUANTILE`
+- `QUANTIZATION_BINARY_ENCODING`
+- `QUANTIZATION_PRODUCT_COMPRESSION`
+- `QUANTIZATION_TURBO_BITS`: TurboQuant requires Qdrant 1.18 or newer
 - `GPU_INDEX`
 - `REBALANCE_TOPOLOGY`
+
+For example, enable scalar quantization when the collection is created with:
+
+```bash
+QUANTIZATION_TYPE=SCALAR
+QUANTIZATION_ALWAYS_RAM=True
+QUANTIZATION_SCALAR_QUANTILE=0.99
+```
 
 Insert/query file inputs:
 

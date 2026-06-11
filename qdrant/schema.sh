@@ -29,6 +29,14 @@ register_qdrant_var "MAX_SEGMENT_SIZE" "default" "" "" "Optional Qdrant max segm
 register_qdrant_var "DEFAULT_SEGMENT_NUMBER" "default" "" "" "Optional Qdrant default segment count; only applied when set"
 register_qdrant_var "GPU_INDEX" "default" "False" "True False" "Whether to use GPU indexing"
 
+# Quantization
+register_qdrant_var "QUANTIZATION_TYPE" "default" "NONE" "NONE SCALAR BINARY PRODUCT TURBO" "Collection quantization method; TURBO requires Qdrant 1.18 or newer"
+register_qdrant_var "QUANTIZATION_ALWAYS_RAM" "default" "False" "True False" "Keep quantized vectors in RAM"
+register_qdrant_var "QUANTIZATION_SCALAR_QUANTILE" "default" "" "" "Optional scalar quantization bound quantile in the range (0, 1]"
+register_qdrant_var "QUANTIZATION_BINARY_ENCODING" "default" "DEFAULT" "DEFAULT TWO_BITS ONE_AND_HALF_BITS" "Binary quantization encoding; DEFAULT uses one bit"
+register_qdrant_var "QUANTIZATION_PRODUCT_COMPRESSION" "default" "X16" "X4 X8 X16 X32 X64" "Product quantization compression ratio"
+register_qdrant_var "QUANTIZATION_TURBO_BITS" "default" "BITS4" "BITS4 BITS2 BITS1_5 BITS1" "TurboQuant bit depth"
+
 
 # Insert / preload workload
 register_qdrant_var "INSERT_CLIENTS_PER_WORKER" "default" "1" "" "Insert clients per worker"

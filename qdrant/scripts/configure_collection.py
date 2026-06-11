@@ -33,6 +33,60 @@ def env_optional_int(name: str) -> int | None:
     return int(value.strip())
 
 
+def build_quantization_config():
+    quantization_type = os.getenv("QUANTIZATION_TYPE", "NONE").strip().upper()
+    always_ram = is_truthy(os.getenv("QUANTIZATION_ALWAYS_RAM"))
+
+    match quantization_type:
+        case "NONE" | "":
+            return None
+        case "SCALAR":
+            quantile_raw = os.getenv("QUANTIZATION_SCALAR_QUANTILE", "").strip()
+            quantile = float(quantile_raw) if quantile_raw else None
+            if quantile is not None and not 0 < quantile <= 1:
+                raise ValueError("QUANTIZATION_SCALAR_QUANTILE must be in the range (0, 1]")
+            return models.ScalarQuantization(
+                scalar=models.ScalarQuantizationConfig(
+                    type=models.ScalarType.INT8,
+                    quantile=quantile,
+                    always_ram=always_ram,
+                ),
+            )
+        case "BINARY":
+            encoding_name = os.getenv(
+                "QUANTIZATION_BINARY_ENCODING", "DEFAULT"
+            ).strip().upper()
+            encoding = None
+            if encoding_name != "DEFAULT":
+                encoding = getattr(models.BinaryQuantizationEncoding, encoding_name)
+            return models.BinaryQuantization(
+                binary=models.BinaryQuantizationConfig(
+                    encoding=encoding,
+                    always_ram=always_ram,
+                ),
+            )
+        case "PRODUCT":
+            compression_name = os.getenv(
+                "QUANTIZATION_PRODUCT_COMPRESSION", "X16"
+            ).strip().upper()
+            return models.ProductQuantization(
+                product=models.ProductQuantizationConfig(
+                    compression=getattr(models.CompressionRatio, compression_name),
+                    always_ram=always_ram,
+                ),
+            )
+        case "TURBO":
+            bits_name = os.getenv("QUANTIZATION_TURBO_BITS", "BITS4").strip().upper()
+            return models.TurboQuantization(
+                turbo=models.TurboQuantQuantizationConfig(
+                    bits=getattr(models.TurboQuantBitSize, bits_name),
+                    always_ram=always_ram,
+                ),
+            )
+        case _:
+            raise ValueError(f"Unknown quantization type: {quantization_type}")
+
+
 def wait_for_shard_transfer(client, collection_name, shard_id, timeout=60, poll_interval=2):
     """Waits until the specified shard is no longer in a transfer state."""
     start = time.time()
@@ -132,6 +186,7 @@ ef_construction = env_int("HNSW_EF_CONSTRUCTION", 100)
 max_segment_size = env_optional_int("MAX_SEGMENT_SIZE")
 default_segment_number = env_optional_int("DEFAULT_SEGMENT_NUMBER")
 distance_metric = os.environ["DISTANCE_METRIC"].strip().lower()
+quantization_config = build_quantization_config()
 
 match distance_metric:
     case "dot" | "ip" | "innerproduct":
@@ -159,13 +214,21 @@ while True:
                 timeout=600,
                 grpc_options={"grpc.enable_http_proxy": 0},
             )
+        collection_kwargs = {
+            "collection_name": collection_name,
+            "vectors_config": models.VectorParams(size=vector_dim, distance=metric),
+            "shard_number": len(nodes),
+            "hnsw_config": models.HnswConfigDiff(
+                m=hnsw_m, ef_construct=ef_construction
+            ),
+            "optimizers_config": models.OptimizersConfigDiff(**optimizers_kwargs),
+            "replication_factor": 1,
+        }
+        if quantization_config is not None:
+            collection_kwargs["quantization_config"] = quantization_config
+
         client.recreate_collection(
-            collection_name=collection_name,
-            vectors_config=models.VectorParams(size=vector_dim, distance=metric),
-            shard_number=len(nodes),
-            hnsw_config=models.HnswConfigDiff(m=hnsw_m, ef_construct=ef_construction),
-            optimizers_config=models.OptimizersConfigDiff(**optimizers_kwargs),
-            replication_factor=1,
+            **collection_kwargs,
         )
         
         break

@@ -16,6 +16,7 @@ print_config_summary() {
     fi
     echo "Vector Dim:               $VECTOR_DIM"
     echo "Distance Metric:          $DISTANCE_METRIC"
+    echo "Quantization Type:        $QUANTIZATION_TYPE"
     echo "GPU Index:                $GPU_INDEX"
     echo "Qdrant Executable:        $QDRANT_EXECUTABLE"
     echo "Insert Trace:             $INSERT_TRACE"
