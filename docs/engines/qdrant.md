@@ -21,8 +21,11 @@ Qdrant is an active engine in the unified submit workflow and supports both
 ## Operational Notes
 
 - PBS runs require `ENV_PATH` unless `ALLOW_SYSTEM_PYTHON=True`.
-- PBS runs require `QDRANT_SIF` as a filename under `qdrant/sifs/`.
+- PBS runs require either `QDRANT_SIF` or `QDRANT_VERSION`. A version derives
+  the expected filename under `qdrant/sifs/`.
 - Local runs use `qdrant/local_main.sh` and a Docker or Podman container.
+- Explicit `QDRANT_SIF` and `QDRANT_LOCAL_IMAGE` values take precedence over
+  values derived from `QDRANT_VERSION`.
 - Mixed runs derive `INSERT_START_ID` from existing data or restore metadata
   when possible.
 

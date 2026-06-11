@@ -18,7 +18,9 @@ register_qdrant_var "WORKERS_PER_NODE" "default" "1" "" "Worker processes launch
 register_qdrant_var "REBALANCE_TOPOLOGY" "default" "False" "True False" "Whether configure_collection should actively move shards to the target topology"
 
 # Engine/runtime selection
-register_qdrant_var "QDRANT_SIF" "conditional" "" "" "Qdrant SIF filename under qdrant/sifs, for example qdrant_latest.sif" "RUN_MODE=PBS"
+register_qdrant_var "QDRANT_VERSION" "default" "" "" "Optional Qdrant version, for example 1.16.1; derives the PBS SIF filename and local image when explicit overrides are empty"
+register_qdrant_var "QDRANT_SIF" "default" "" "" "Explicit Qdrant SIF filename under qdrant/sifs; takes precedence over QDRANT_VERSION"
+register_qdrant_var "QDRANT_LOCAL_IMAGE" "default" "" "" "Explicit local Qdrant container image; takes precedence over QDRANT_VERSION"
 register_qdrant_var "QDRANT_EXECUTABLE" "default" "" "" "Optional local Qdrant executable override copied from qdrantBuilds; empty uses the executable inside the SIF"
 register_qdrant_var "LOG_LEVEL" "default" "ERROR" "ERROR DEBUG INFO" "Qdrant log level passed to generated node configs"
 

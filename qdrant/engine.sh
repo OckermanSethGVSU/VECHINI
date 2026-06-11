@@ -36,6 +36,60 @@ qdrant_cores_label() {
     fi
 }
 
+qdrant_normalize_version() {
+    local version="$1"
+
+    [[ -n "$version" ]] || return 0
+    if [[ ! "$version" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "Invalid QDRANT_VERSION '$version'. Use a container tag such as 1.16.1, v1.16.1, or latest." >&2
+        return 1
+    fi
+
+    if [[ "$version" == "latest" || "$version" == v* ]]; then
+        printf '%s\n' "$version"
+    else
+        printf 'v%s\n' "$version"
+    fi
+}
+
+qdrant_resolve_runtime_version() {
+    local normalized_version=""
+
+    if [[ -n "${QDRANT_VERSION:-}" ]]; then
+        normalized_version="$(qdrant_normalize_version "$QDRANT_VERSION")" || return 1
+        QDRANT_VERSION="$normalized_version"
+    fi
+
+    if [[ -z "${QDRANT_LOCAL_IMAGE:-}" ]]; then
+        if [[ -n "$normalized_version" ]]; then
+            QDRANT_LOCAL_IMAGE="qdrant/qdrant:${normalized_version}"
+        else
+            QDRANT_LOCAL_IMAGE="qdrant/qdrant:latest"
+        fi
+    fi
+
+    if [[ "${RUN_MODE^^}" == "PBS" && -z "${QDRANT_SIF:-}" && -n "$normalized_version" ]]; then
+        QDRANT_SIF="qdrant_${normalized_version}.sif"
+    fi
+}
+
+qdrant_validate_runtime_selection() {
+    if [[ -n "${QDRANT_VERSION:-}" ]]; then
+        qdrant_normalize_version "$QDRANT_VERSION" >/dev/null || return 1
+    fi
+
+    if [[ "${RUN_MODE^^}" == "PBS" && -z "${QDRANT_SIF:-}" && -z "${QDRANT_VERSION:-}" ]]; then
+        echo "Qdrant PBS runs require QDRANT_SIF or QDRANT_VERSION." >&2
+        echo "Download a versioned SIF with: $ENGINE_DIR/utils/download_sif.sh [version]" >&2
+        return 1
+    fi
+
+    if [[ "${RUN_MODE^^}" == "PBS" && "${QDRANT_SIF:-}" == */* ]]; then
+        echo "QDRANT_SIF must be a filename under $ENGINE_DIR/sifs, not a path: $QDRANT_SIF" >&2
+        return 1
+    fi
+}
+
 # Load Qdrant schema defaults into the shared engine contract.
 engine_set_defaults() {
     schema_load "$ENGINE_SCHEMA_PREFIX" "$ROOT_DIR/common/schema.sh"
@@ -75,10 +129,7 @@ EOF
         return 1
     fi
 
-    if [[ "${RUN_MODE^^}" == "PBS" && "$QDRANT_SIF" == */* ]]; then
-        echo "QDRANT_SIF must be a filename under $ENGINE_DIR/sifs, not a path: $QDRANT_SIF" >&2
-        return 1
-    fi
+    qdrant_validate_runtime_selection || return 1
 
     INSERT_START_ID="${INSERT_START_ID:-}"
 }
@@ -116,6 +167,7 @@ engine_iterate_matrix() {
 # Load one matrix combo into scalar globals used by naming and env emission.
 engine_load_combo() {
     schema_load_combo_assignments "$1"
+    qdrant_resolve_runtime_version || return 1
 
     NODES_CURRENT="$NODES"
     WORKERS_PER_NODE_CURRENT="$WORKERS_PER_NODE"
@@ -159,6 +211,7 @@ qdrant_validate_perf_payload() {
 engine_validate_combo() {
     schema_validate_current_values "$ENGINE_SCHEMA_PREFIX" || return 1
     schema_validate_recall_config || return 1
+    qdrant_validate_runtime_selection || return 1
     qdrant_validate_perf_payload
 }
 

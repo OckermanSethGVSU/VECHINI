@@ -18,6 +18,9 @@ print_config_summary() {
     echo "Distance Metric:          $DISTANCE_METRIC"
     echo "Quantization Type:        $QUANTIZATION_TYPE"
     echo "GPU Index:                $GPU_INDEX"
+    echo "Qdrant Version:           ${QDRANT_VERSION:-default}"
+    echo "Qdrant SIF:               ${QDRANT_SIF:-n/a}"
+    echo "Qdrant Local Image:       ${QDRANT_LOCAL_IMAGE:-qdrant/qdrant:latest}"
     echo "Qdrant Executable:        $QDRANT_EXECUTABLE"
     echo "Insert Trace:             $INSERT_TRACE"
     echo "Query Trace:              $QUERY_TRACE"
@@ -116,6 +119,9 @@ apply_overrides() {
     apply_scalar_override TOTAL_QUERY_CLIENTS
     apply_scalar_override QUERY_STREAMING
     apply_scalar_override PLATFORM
+    apply_scalar_override QDRANT_VERSION
+    apply_scalar_override QDRANT_SIF
+    apply_scalar_override QDRANT_LOCAL_IMAGE
     apply_scalar_override QDRANT_EXECUTABLE
     apply_scalar_override RESTORE_DIR
     apply_scalar_override EXPECTED_CORPUS_SIZE

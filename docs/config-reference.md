@@ -70,7 +70,9 @@ Source of truth:
 |---|---|---|---|
 | `WORKERS_PER_NODE` | `1` | free-form | Worker processes launched per compute node |
 | `REBALANCE_TOPOLOGY` | `False` | `True`, `False` | Whether configure_collection should actively move shards to the target topology |
-| `QDRANT_SIF` | required when `RUN_MODE=PBS` | free-form | Qdrant SIF filename under qdrant/sifs, for example qdrant_latest.sif |
+| `QDRANT_VERSION` | optional | free-form | Optional Qdrant version, for example 1.16.1; derives the PBS SIF filename and local image when explicit overrides are empty |
+| `QDRANT_SIF` | optional | free-form | Explicit Qdrant SIF filename under qdrant/sifs; takes precedence over QDRANT_VERSION |
+| `QDRANT_LOCAL_IMAGE` | optional | free-form | Explicit local Qdrant container image; takes precedence over QDRANT_VERSION |
 | `QDRANT_EXECUTABLE` | optional | free-form | Optional local Qdrant executable override copied from qdrantBuilds; empty uses the executable inside the SIF |
 | `LOG_LEVEL` | `ERROR` | `ERROR`, `DEBUG`, `INFO` | Qdrant log level passed to generated node configs |
 | `HNSW_M` | `16` | free-form | HNSW M parameter |

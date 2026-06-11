@@ -54,7 +54,7 @@ Required for runs:
 
 Required for PBS runs:
 
-- `QDRANT_SIF`: filename under `qdrant/sifs/`, such as `qdrant_v1.16.1.sif`
+- `QDRANT_SIF` or `QDRANT_VERSION`
 - `ENV_PATH`, unless `ALLOW_SYSTEM_PYTHON=True`
 
 Common runtime knobs:
@@ -67,7 +67,9 @@ Common runtime knobs:
 - `STORAGE_MEDIUM`
 - `ENV_PATH`: Python environment root activated by PBS runs
 - `ALLOW_SYSTEM_PYTHON`: set `True` to use the already-loaded Python environment instead of `ENV_PATH`
-- `QDRANT_SIF`: source SIF filename copied from `qdrant/sifs/` into generated runs as `qdrant.sif`
+- `QDRANT_VERSION`: optional version such as `1.16.1`; derives `qdrant_v1.16.1.sif` for PBS and `qdrant/qdrant:v1.16.1` locally
+- `QDRANT_SIF`: explicit source SIF filename copied from `qdrant/sifs/` into generated runs as `qdrant.sif`
+- `QDRANT_LOCAL_IMAGE`: explicit Docker or Podman image for local runs
 - `QDRANT_EXECUTABLE`: optional local executable override copied from `qdrant/qdrantBuilds/`; leave empty to use the executable inside the SIF
 - `LOG_LEVEL`
 - `VECTOR_DIM`
@@ -149,6 +151,24 @@ Set `QDRANT_SIF` to the filename, not a path:
 
 ```bash
 QDRANT_SIF=qdrant_v1.16.1.sif
+```
+
+Alternatively, select the matching version for both PBS and local runs:
+
+```bash
+QDRANT_VERSION=1.16.1
+```
+
+For PBS, the matching `qdrant_v1.16.1.sif` must already exist under
+`qdrant/sifs/`. For local runs, the resolved image is
+`qdrant/qdrant:v1.16.1`.
+
+Explicit values take precedence independently:
+
+```bash
+QDRANT_VERSION=1.16.1
+QDRANT_SIF=my_custom_qdrant.sif
+QDRANT_LOCAL_IMAGE=my-registry/qdrant:custom
 ```
 
 Generated PBS runs always receive the selected file as `qdrant.sif`, which is what `runtime/cluster/launchQdrantNode.sh` executes.
