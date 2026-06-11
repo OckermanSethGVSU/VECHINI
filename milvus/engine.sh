@@ -158,7 +158,8 @@ engine_load_combo() {
 }
 
 engine_validate_combo() {
-    schema_validate_current_values "$ENGINE_SCHEMA_PREFIX"
+    schema_validate_current_values "$ENGINE_SCHEMA_PREFIX" || return 1
+    schema_validate_recall_config || return 1
     if [[ "$STORAGE_MEDIUM" == "DAOS" || "$ETCD_MEDIUM" == "DAOS" || ( "$MODE" == "DISTRIBUTED" && "$MINIO_MEDIUM" == "DAOS" ) ]]; then
         if [[ -z "${DAOS_PROJECT:-}" || -z "${DAOS_CONTAINER:-}" ]]; then
             echo "Milvus variables 'DAOS_PROJECT' and 'DAOS_CONTAINER' are required when any Milvus storage medium uses DAOS." >&2
@@ -226,6 +227,9 @@ engine_copy_payload() {
     local target_dir="$1"
 
     copy_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state"
+    if [[ "${CALCULATE_RECALL:-False}" == "True" ]]; then
+        copy_engine_items "$ROOT_DIR/utils" "$target_dir" "compute_recall.py"
+    fi
 
     if [[ "${RUN_MODE^^}" == "LOCAL" ]]; then
         copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" \

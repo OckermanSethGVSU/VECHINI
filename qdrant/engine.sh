@@ -157,7 +157,8 @@ qdrant_validate_perf_payload() {
 
 # Validate a loaded combo after sweep expansion.
 engine_validate_combo() {
-    schema_validate_current_values "$ENGINE_SCHEMA_PREFIX"
+    schema_validate_current_values "$ENGINE_SCHEMA_PREFIX" || return 1
+    schema_validate_recall_config || return 1
     qdrant_validate_perf_payload
 }
 
@@ -195,6 +196,9 @@ engine_copy_payload() {
     mkdir -p "$target_dir/rustSrc"
     qdrant_validate_perf_payload || return 1
     copy_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state" || return 1
+    if [[ "${CALCULATE_RECALL:-False}" == "True" ]]; then
+        copy_engine_items "$ROOT_DIR/utils" "$target_dir" "compute_recall.py"
+    fi
 
     if [[ "${RUN_MODE^^}" == "LOCAL" ]]; then
         copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" "batch_client"

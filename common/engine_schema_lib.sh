@@ -308,6 +308,23 @@ schema_validate_current_values() {
     done
 }
 
+# Validate shared recall settings after one schema sweep combination is loaded.
+schema_validate_recall_config() {
+    if [[ "${CALCULATE_RECALL:-False}" != "True" ]]; then
+        return 0
+    fi
+
+    if [[ "${TASK^^}" != "QUERY" ]]; then
+        echo "CALCULATE_RECALL=True is supported only for TASK=QUERY." >&2
+        return 1
+    fi
+
+    if [[ -z "${GROUND_TRUTH_FILEPATH:-}" ]]; then
+        echo "GROUND_TRUTH_FILEPATH is required when CALCULATE_RECALL=True." >&2
+        return 1
+    fi
+}
+
 # Print help output that describes every registered variable.
 schema_print_registry_table() {
     local schema_prefix="$1"

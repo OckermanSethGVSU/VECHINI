@@ -43,6 +43,8 @@ register_common_var "QUERY_BATCH_SIZE" "default" "32" "" "Query batch size; sing
 register_common_var "QUERY_BALANCE_STRATEGY" "conditional" "NO_BALANCE" "NO_BALANCE WORKER_BALANCE" "Query balancing policy" "TASK=QUERY"
 register_common_var "QUERY_STREAMING" "default" "False" "True False" "Enable query streaming behavior"
 register_common_var "TOP_K" "default" "10" "" "Optional top-k override"
+register_common_var "CALCULATE_RECALL" "default" "False" "True False" "Calculate recall.csv after a QUERY workflow"
+register_common_var "GROUND_TRUTH_FILEPATH" "conditional" "" "" "Ground-truth neighbor ID NPY matrix used for recall calculation" "CALCULATE_RECALL=True"
 
 # MIXED variables
 register_common_var "MIXED_INSERT_DATA_FILEPATH" "conditional" "" "" "Mixed insert corpus file path" "TASK=MIXED"

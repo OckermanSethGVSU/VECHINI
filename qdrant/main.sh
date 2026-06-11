@@ -25,6 +25,24 @@ move_standard_npy_files() {
     shopt -u nullglob
 }
 
+calculate_recall_if_enabled() {
+    [[ "${CALCULATE_RECALL:-False}" == "True" ]] || return 0
+
+    shopt -s nullglob
+    local query_id_files=(queryNPY/query_result_ids*.npy)
+    shopt -u nullglob
+    if (( ${#query_id_files[@]} == 0 )); then
+        echo "CALCULATE_RECALL=True but no queryNPY/query_result_ids*.npy files were produced." >&2
+        return 1
+    fi
+
+    python3 ./compute_recall.py \
+        "$GROUND_TRUTH_FILEPATH" \
+        "${query_id_files[@]}" \
+        "${TOP_K:-10}" \
+        --output recall.csv
+}
+
 finalize_cluster_run() {
     touch flag.txt
     touch ./runtime_state/flag.txt
@@ -357,3 +375,4 @@ fi
 
 mkdir workerOut
 mv rank*.out workerOut
+calculate_recall_if_enabled

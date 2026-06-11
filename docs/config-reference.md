@@ -44,6 +44,8 @@ Source of truth:
 | `QUERY_BALANCE_STRATEGY` | required when `TASK=QUERY` | `NO_BALANCE`, `WORKER_BALANCE` | Query balancing policy |
 | `QUERY_STREAMING` | `False` | `True`, `False` | Enable query streaming behavior |
 | `TOP_K` | `10` | free-form | Optional top-k override |
+| `CALCULATE_RECALL` | `False` | `True`, `False` | Calculate recall.csv after a QUERY workflow |
+| `GROUND_TRUTH_FILEPATH` | required when `CALCULATE_RECALL=True` | free-form | Ground-truth neighbor ID NPY matrix used for recall calculation |
 | `MIXED_INSERT_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Mixed insert corpus file path |
 | `MIXED_QUERY_DATA_FILEPATH` | required when `TASK=MIXED` | free-form | Mixed query vector file path |
 | `MIXED_INSERT_MODE` | `MAX` | `MAX`, `RATE`, `max`, `rate` | Mixed insert pacing mode |
@@ -76,6 +78,12 @@ Source of truth:
 | `MAX_SEGMENT_SIZE` | optional | free-form | Optional Qdrant max segment size in KB; only applied when set |
 | `DEFAULT_SEGMENT_NUMBER` | optional | free-form | Optional Qdrant default segment count; only applied when set |
 | `GPU_INDEX` | `False` | `True`, `False` | Whether to use GPU indexing |
+| `QUANTIZATION_TYPE` | `NONE` | `NONE`, `SCALAR`, `BINARY`, `PRODUCT`, `TURBO` | Collection quantization method; TURBO requires Qdrant 1.18 or newer |
+| `QUANTIZATION_ALWAYS_RAM` | `False` | `True`, `False` | Keep quantized vectors in RAM |
+| `QUANTIZATION_SCALAR_QUANTILE` | optional | free-form | Optional scalar quantization bound quantile in the range (0, 1] |
+| `QUANTIZATION_BINARY_ENCODING` | `DEFAULT` | `DEFAULT`, `TWO_BITS`, `ONE_AND_HALF_BITS` | Binary quantization encoding; DEFAULT uses one bit |
+| `QUANTIZATION_PRODUCT_COMPRESSION` | `X16` | `X4`, `X8`, `X16`, `X32`, `X64` | Product quantization compression ratio |
+| `QUANTIZATION_TURBO_BITS` | `BITS4` | `BITS4`, `BITS2`, `BITS1_5`, `BITS1` | TurboQuant bit depth |
 | `INSERT_CLIENTS_PER_WORKER` | `1` | free-form | Insert clients per worker |
 | `TOTAL_QUERY_CLIENTS` | optional | free-form | Optional total query clients across the run |
 | `QUERY_CLIENTS_PER_WORKER` | required when `TASK=QUERY` | free-form | Query clients per worker |
@@ -90,7 +98,7 @@ Source of truth:
 | `RPC_TIMEOUT` | optional | free-form | Optional RPC timeout override |
 | `RESTORE_DIR` | optional | free-form | Restore an existing Qdrant state from this directory |
 | `EXPECTED_CORPUS_SIZE` | `10000000` | free-form | Expected corpus size when restoring |
-| `PERF` | `NONE` | `NONE`, `STAT`, `TRACE` | Performance collection mode |
+| `PERF` | `NONE` | `NONE`, `STAT`, `RECORD` | Performance collection mode |
 | `PERF_EVENTS` | `topdown-be-bound,topdown-mem-bound,topdown-retiring,topdown-fe-bound,topdown-bad-spec` | free-form | Comma-separated perf stat events |
 | `INSERT_TRACE` | optional | free-form | Optional insert trace file or mode |
 | `QUERY_TRACE` | optional | free-form | Optional query trace file or mode |
@@ -179,7 +187,8 @@ Source of truth:
 | Name | Default / Requirement | Choices | Notes |
 |---|---|---|---|
 | `WORKERS_PER_NODE` | `1` | free-form | Worker processes launched per compute node |
-| `USEPERF` | `false` | `true`, `false` | Enable perf collection |
+| `PERF` | `NONE` | `NONE`, `STAT`, `RECORD` | Performance collection mode |
+| `PERF_EVENTS` | `cycles,instructions,topdown-be-bound,topdown-mem-bound,topdown-retiring` | free-form | Comma-separated perf stat events |
 | `WEAVIATE_SIF` | required when `RUN_MODE=PBS` | free-form | Weaviate SIF filename under weaviate/sifs, for example weaviate_1.36.0.sif |
 | `ALLOW_REMOTE_WEAVIATE_IMAGE` | `false` | `true`, `false` | Allow PBS runs to skip staging a local Weaviate SIF and pull WEAVIATE_IMAGE_URI at runtime |
 | `DEBUG` | `false` | `true`, `false` | Enable verbose client debug logging |

@@ -89,6 +89,9 @@ QUANTIZATION_ALWAYS_RAM=True
 QUANTIZATION_SCALAR_QUANTILE=0.99
 ```
 
+See [QUANTIZATION.md](QUANTIZATION.md) for a comparison of the available
+methods, parameter details, and experiment guidance.
+
 Insert/query file inputs:
 
 - `INSERT_DATA_FILEPATH`
