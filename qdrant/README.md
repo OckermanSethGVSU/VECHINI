@@ -199,6 +199,149 @@ Remove `--generate-only` when the config is ready to submit.
 
 Use `utils/npy_inspect.py` to inspect `.npy` workload files:
 
+### Local recall sweeps
+
+`utils/run_local_recall_sweep.py` runs a resumable local parameter sweep and
+writes one aggregate CSV containing the dataset, Qdrant settings, timings, and
+recall:
+
+```bash
+python3 qdrant/utils/run_local_recall_sweep.py \
+  qdrant/sampleConfigs/local_recall_sweep.toml \
+  --dry-run
+
+python3 qdrant/utils/run_local_recall_sweep.py \
+  qdrant/sampleConfigs/local_recall_sweep.toml
+```
+
+The TOML file explicitly pairs each data matrix with its query and ground-truth
+ID matrices. The runner reads `distance_metric.txt` from each dataset directory.
+Set `enabled=false` on a `[[datasets]]` entry to omit it from a particular run.
+It recreates and inserts for each dataset, segment-count, and quantization
+combination; rebuilds for each `HNSW_M` and `HNSW_EF_CONSTRUCTION` combination;
+and reuses that index across all `HNSW_EF_SEARCH` values.
+For each requested segment count, it calculates
+`MAX_SEGMENT_SIZE=ceil(vector_payload_bytes / segments / 1024)` and records that
+value as `segment_size_kb` in the aggregate CSV.
+
+Successful rows already present in the output CSV are skipped when
+`run.resume=true`.
+When `qdrant_version="latest"`, the local sweep always pulls the current
+`qdrant/qdrant:latest` image and recreates its dedicated container. Persisted
+Qdrant data remains in the mounted sweep output directory.
+
+Quantization exploration is defined with named `[[quantization_variants]]`
+tables. Variants may independently set `type`, `always_ram`,
+`scalar_quantile`, `binary_encoding`, `product_compression`, and `turbo_bits`.
+The variant name and all effective settings are written to the aggregate CSV.
+`always_ram` defaults to `true`; set it to `false` for an explicit disk-backed
+comparison.
+Set `enabled=false` on expensive variants you want to omit.
+The older `[sweep].quantization` plus `[quantization]` format remains supported.
+
+`[sweep].top_k` accepts multiple values. Every `(ef_search, top_k)` pair is a
+separate Qdrant query execution because the requested result limit can affect
+effective HNSW search behavior. Query outputs are isolated under
+`ef_search_<n>/top_k_<k>/`.
+When a requested `ef_search` is below `top_k`, it is normalized to
+`ef_search=top_k`. Duplicate normalized pairs are collapsed into one query.
+
+Every collection `build/`, index-build, and `top_k_*` query directory
+contains:
+
+- `run_config.env`: the exact shell-sourceable configuration environment
+  explicitly passed by the sweep runner
+- `sweep_params.csv`: a compact one-row summary of the dataset, operation,
+  image, segment, quantization, HNSW, and query settings
+
+### PBS recall sweep workers
+
+`utils/run_pbs_recall_sweep.py` divides the same TOML sweep into independent
+collection-level units:
+
+```text
+dataset + number_of_segments + quantization_variant
+```
+
+Each unit inserts its dataset once, rebuilds each requested HNSW index, and runs
+the full normalized `(ef_search, top_k)` query matrix. Workers do not communicate
+with each other or share a running Qdrant instance.
+
+Prepare the queue on the parallel filesystem:
+
+```bash
+qdrant/utils/run_pbs_recall_sweep.py \
+  qdrant/sampleConfigs/local_recall_sweep.toml prepare
+```
+
+This creates `pending/`, `claimed/`, `completed/`, `failed/`, `heartbeats/`,
+and `units/` directories plus `worker.pbs.sh`.
+
+The recommended submission path is the continuous watcher:
+
+```bash
+qdrant/utils/run_pbs_recall_sweep.py \
+  qdrant/sampleConfigs/local_recall_sweep.toml watch
+```
+
+Configure `queue_candidates`, `queue_limits`, `queue_queued_limits`,
+`submit_username`, `walltime`, and `watch_poll_seconds` under `[pbs]`. The
+watcher uses `qstat -u submit_username` and counts all of that user's jobs,
+matching the existing queue-watch behavior. It submits workers with
+`qsub -q <selected-queue>`, replenishes open slots until all units finish,
+automatically requeues stale claims, stops if a unit enters `failed/`, and
+aggregates results on completion when `aggregate_on_complete=true`.
+
+Only one watcher may control a sweep queue at a time; an atomic `watch.lock`
+prevents duplicate submitters. The watcher should run from a login or service
+node for the duration of the sweep.
+
+Workers can still be submitted manually:
+
+```bash
+cd qdrant/pbs_sweep_queue
+qsub -q capacity worker.pbs.sh
+```
+
+Each worker atomically renames one pending JSON descriptor into `claimed/`,
+writes a periodic heartbeat, launches Qdrant from the configured SIF with
+Apptainer, executes the unit, and atomically moves the descriptor to
+`completed/` or `failed/`. Qdrant storage is placed under the configured
+node-local `scratch_root`; logs, audit files, recall, and timing results remain
+under the shared `units/` directory.
+
+Set `worker_max_units=0` to keep claiming units until the queue is empty or the
+PBS allocation approaches its walltime. `stop_before_seconds=300` reserves five
+minutes for shutdown. The worker reads allocated and used walltime from
+`qstat -f $PBS_JOBID` when available. At the reserve boundary it terminates the
+active insert/index/query process group, stops Apptainer, deletes node-local
+scratch, and atomically returns the current unit to `pending/`. Completed query
+rows in that unit remain recorded and are skipped when another worker resumes
+the unit.
+
+Queue operations:
+
+```bash
+# Inspect counts.
+qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml status
+
+# Continuously fill configured queue slots until completion.
+qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml watch
+
+# Recover claims whose heartbeat has expired.
+qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml requeue-stale
+
+# Retry units that exited with an error.
+qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml requeue-failed
+
+# Combine per-unit CSVs without concurrent shared-file appends.
+qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml aggregate
+```
+
+The TOML file is hashed during `prepare`; workers refuse to run if it changes.
+Run `prepare` again to add missing descriptors, or `prepare --reset` to discard
+all existing queue state and rebuild it.
+
 ```bash
 qdrant/utils/npy_inspect.py /path/to/file.npy
 qdrant/utils/npy_inspect.py /path/to/file.npy --field shape

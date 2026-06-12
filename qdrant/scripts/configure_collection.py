@@ -171,6 +171,8 @@ nodes = load_topology("ip_registry.txt", use_localhost=False)
 run_mode = os.getenv("RUN_MODE", "PBS").strip().lower()
 rebalance_topology = is_truthy(os.getenv("REBALANCE_TOPOLOGY"))
 collection_name = os.environ["COLLECTION_NAME"].strip()
+initial_sleep_seconds = env_int("CONFIGURE_COLLECTION_INITIAL_SLEEP_SECONDS", 2)
+ready_sleep_seconds = env_int("CONFIGURE_COLLECTION_READY_SLEEP_SECONDS", 10)
 
 
 
@@ -242,12 +244,12 @@ while True:
 
 print(f"Created Collection: {collection_name}",flush=True)
 if run_mode == "local" or not rebalance_topology:
-    time.sleep(2)
+    time.sleep(initial_sleep_seconds)
     info = client.get_collection(collection_name)
     print("*********************** Initial Collection Info ***********************", flush=True)
     print(info, flush=True)
     print("***********************************************************************", flush=True)
-    time.sleep(10)  
+    time.sleep(ready_sleep_seconds)
     if not rebalance_topology:
         Path("ready.flag").touch()
     exit()

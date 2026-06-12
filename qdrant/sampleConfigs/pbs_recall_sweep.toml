@@ -1,0 +1,202 @@
+[run]
+output_dir = "../pbs_sweep_results"
+results_csv = "qdrant_recall_sweep.csv"
+qdrant_version = "latest"
+container_name = "qdrant-local-sweep"
+insert_batch_size = 512
+query_batch_size = 128
+insert_clients = 4
+query_clients = 1
+streaming = true
+resume = true
+keep_container = false
+
+[pbs]
+# Queue state and unit outputs must live on one shared parallel filesystem.
+queue_dir = "../pbs_sweep_queue"
+qdrant_sif = "../sifs/qdrant_latest.sif"
+# Each worker uses node-local storage for its Qdrant data.
+scratch_root = "/dev/shm/"
+heartbeat_seconds = 30
+stale_after_seconds = 900
+worker_max_units = 0
+stop_before_seconds = 300
+account = "radix-io"
+queue = ""
+queue_candidates = ["debug", "debug-scaling", "capacity"]
+queue_limits = [1, 1, 5]
+queue_queued_limits = [1, 1, 5]
+submit_username = "treewalker"
+watch_poll_seconds = 30
+aggregate_on_complete = true
+walltime = "01:00:00"
+place = "scatter"
+platform = "AURORA"
+apptainer_args = []
+setup_commands = ["module load apptainer", "module load frameworks"]
+
+[sweep]
+top_k = [10, 50, 100]
+hnsw_m = [8, 16, 32, 64, 128, 256, 512]
+ef_construct = [64, 128, 256, 512]
+ef_search = [1, 8, 16, 32, 64, 128, 256, 512, 1024]
+number_of_segments = [1, 2, 4, 8, 16, 32, 64, 128]
+
+[[quantization_variants]]
+name = "none"
+type = "NONE"
+
+[[quantization_variants]]
+name = "scalar_default"
+type = "SCALAR"
+
+[[quantization_variants]]
+name = "scalar_q999"
+type = "SCALAR"
+scalar_quantile = 0.999
+
+[[quantization_variants]]
+name = "scalar_q99"
+type = "SCALAR"
+scalar_quantile = 0.99
+
+[[quantization_variants]]
+name = "scalar_q95"
+type = "SCALAR"
+scalar_quantile = 0.95
+
+[[quantization_variants]]
+name = "scalar_q90"
+type = "SCALAR"
+scalar_quantile = 0.90
+
+[[quantization_variants]]
+name = "binary_1bit"
+type = "BINARY"
+binary_encoding = "DEFAULT"
+
+[[quantization_variants]]
+name = "binary_2bit"
+type = "BINARY"
+binary_encoding = "TWO_BITS"
+
+[[quantization_variants]]
+name = "binary_1_5bit"
+type = "BINARY"
+binary_encoding = "ONE_AND_HALF_BITS"
+
+[[quantization_variants]]
+name = "product_x4"
+type = "PRODUCT"
+product_compression = "X4"
+
+[[quantization_variants]]
+name = "product_x8"
+type = "PRODUCT"
+product_compression = "X8"
+
+[[quantization_variants]]
+name = "product_x16"
+type = "PRODUCT"
+product_compression = "X16"
+
+[[quantization_variants]]
+name = "product_x32"
+type = "PRODUCT"
+product_compression = "X32"
+
+[[quantization_variants]]
+name = "product_x64"
+type = "PRODUCT"
+product_compression = "X64"
+
+[[quantization_variants]]
+name = "turbo_bits4"
+type = "TURBO"
+turbo_bits = "BITS4"
+
+[[quantization_variants]]
+name = "turbo_bits2"
+type = "TURBO"
+turbo_bits = "BITS2"
+
+[[quantization_variants]]
+name = "turbo_bits1_5"
+type = "TURBO"
+turbo_bits = "BITS1_5"
+
+[[quantization_variants]]
+name = "turbo_bits1"
+type = "TURBO"
+turbo_bits = "BITS1"
+
+[quantization]
+# Legacy defaults used only when [[quantization_variants]] is omitted.
+always_ram = true
+scalar_quantile = 0.99
+binary_encoding = "DEFAULT"
+product_compression = "X16"
+turbo_bits = "BITS4"
+
+[[datasets]]
+name = "bigann_10m"
+directory = "../../testData/bigann"
+data = "base.1B_crop_nb_10000000.npy"
+queries = "query.public.10K.npy"
+ground_truth = "bigann-10M.ids.npy"
+
+[[datasets]]
+name = "deep_10m"
+directory = "../../testData/deep1b"
+data = "base.1B_crop_nb_10000000.npy"
+queries = "query.public.10K.npy"
+ground_truth = "deep-10M.ids.npy"
+
+[[datasets]]
+name = "text2image_1m"
+directory = "../../testData/text2image1B"
+data = "base.1B_crop_nb_1000000.npy"
+queries = "query.heldout.30K.npy"
+ground_truth = "gt100-heldout.30K.ids.npy"
+
+[[datasets]]
+name = "msturing_1m"
+directory = "../../testData/MSTuringANNS"
+data = "base1b_crop_nb_1000000.npy"
+queries = "query100K.npy"
+ground_truth = "msturing-gt-1M.ids.npy"
+
+[[datasets]]
+name = "msspace_1m"
+directory = "../../testData/MSSPACEV1B"
+data = "spacev1b_base_crop_nb_1000000.npy"
+queries = "query.npy"
+ground_truth = "msspacev-gt-1M.ids.npy"
+
+[[datasets]]
+name = "msmarco_1m"
+directory = "../../testData/msmarco_websearch"
+data = "vectors_crop_nb_1000000.npy"
+queries = "query.npy"
+ground_truth = "msmarco-1M-gt100.ids.npy"
+
+[[datasets]]
+name = "openai_arxiv_100k"
+directory = "../../testData/OpenAIArXiv"
+data = "openai_base_crop_nb_100000.npy"
+queries = "openai_query.npy"
+ground_truth = "openai-100K.ids.npy"
+
+[[datasets]]
+name = "wikipedia_cohere_100k"
+directory = "../../testData/wikipedia_cohere"
+data = "wikipedia_base_crop_nb_100000.npy"
+queries = "wikipedia_query.npy"
+ground_truth = "wikipedia-100K.ids.npy"
+
+[[datasets]]
+name = "yfcc_1m"
+directory = "../../testData/YFCC100MImages"
+data = "yfcc100m_vecs_sampled_1m_crop_nb_1000000.npy"
+queries = "yfcc100m_query_vecs.npy"
+ground_truth = "yfcc100m_query_gt100_sampled_1m.ids.npy"
