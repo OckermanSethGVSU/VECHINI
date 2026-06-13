@@ -195,7 +195,7 @@ match distance_metric:
         metric = models.Distance.DOT
     case "cosine":
         metric = models.Distance.COSINE
-    case "euclidan" | "l2":
+    case "euclidean" | "euclid" | "euclidan" | "l2":
         metric = models.Distance.EUCLID
     case _:
         raise ValueError(f"Unknown distance metric: {distance_metric}")

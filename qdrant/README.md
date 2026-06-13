@@ -225,7 +225,19 @@ For each requested segment count, it calculates
 value as `segment_size_kb` in the aggregate CSV.
 
 Successful rows already present in the output CSV are skipped when
-`run.resume=true`.
+`run.resume=true`. Use `--results-csv` to resume locally from any compatible
+local or PBS aggregate CSV and append new local rows to that same file:
+
+```bash
+python3 qdrant/utils/run_local_recall_sweep.py \
+  qdrant/sampleConfigs/local_recall_sweep.toml \
+  --results-csv qdrant/pbs_sweep_queue/results.csv
+```
+
+Compatibility is determined by the exact `run_key`, which includes the dataset,
+distance metric, segment count, quantization settings, HNSW build settings,
+`ef_search`, and `top_k`. Imported rows retain their original timing, image, and
+result-directory columns for provenance.
 When `qdrant_version="latest"`, the local sweep always pulls the current
 `qdrant/qdrant:latest` image and recreates its dedicated container. Persisted
 Qdrant data remains in the mounted sweep output directory.
@@ -336,7 +348,23 @@ qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml requeue-failed
 
 # Combine per-unit CSVs without concurrent shared-file appends.
 qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml aggregate
+
+# Import successful local or PBS rows into an existing queue.
+qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml import-results RESULTS.csv
 ```
+
+Results can also be imported while preparing a new queue:
+
+```bash
+qdrant/utils/run_pbs_recall_sweep.py CONFIG.toml prepare \
+  --results-csv RESULTS.csv
+```
+
+The importer copies only successful rows whose `run_key` exactly matches the
+current TOML. A fully covered unit is moved to `completed/`. A partially covered
+unit remains pending and its worker skips the imported query configurations.
+Rows outside the current sweep and failed rows are ignored. Running/claimed
+units are never moved by the importer.
 
 The TOML file is hashed during `prepare`; workers refuse to run if it changes.
 Run `prepare` again to add missing descriptors, or `prepare --reset` to discard

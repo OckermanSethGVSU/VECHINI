@@ -1,8 +1,8 @@
 [run]
-output_dir = "../pbs_sweep_results"
-results_csv = "qdrant_recall_sweep.csv"
+output_dir = "../local_sweep_results_from_pbs"
+results_csv = "results.csv"
 qdrant_version = "latest"
-container_name = "qdrant-local-sweep"
+container_name = "qdrant-local-pbs-sweep"
 insert_batch_size = 512
 query_batch_size = 128
 insert_clients = 4
@@ -10,30 +10,6 @@ query_clients = 1
 streaming = true
 resume = true
 keep_container = false
-
-[pbs]
-# Queue state and unit outputs must live on one shared parallel filesystem.
-queue_dir = "../pbs_sweep_queue"
-qdrant_sif = "../sifs/qdrant_latest.sif"
-# Each worker uses node-local storage for its Qdrant data.
-scratch_root = "/dev/shm/"
-heartbeat_seconds = 30
-stale_after_seconds = 900
-worker_max_units = 0
-stop_before_seconds = 300
-account = "radix-io"
-queue = ""
-queue_candidates = ["debug", "debug-scaling", "capacity"]
-queue_limits = [1, 1, 5]
-queue_queued_limits = [1, 1, 5]
-submit_username = "treewalker"
-watch_poll_seconds = 30
-aggregate_on_complete = true
-walltime = "01:00:00"
-place = "scatter"
-platform = "AURORA"
-apptainer_args = []
-setup_commands = ["module load apptainer", "module load frameworks", "source /lus/flare/projects/radix-io/sockerman/SCVectorDB/qdrant/qEnv/bin/activate"]
 
 [sweep]
 top_k = [10, 50, 100]

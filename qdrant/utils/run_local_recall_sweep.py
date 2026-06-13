@@ -18,9 +18,11 @@ import sys
 import time
 import tomllib
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
+
+import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -195,6 +197,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore successful rows already present in the results CSV",
     )
+    parser.add_argument(
+        "--results-csv",
+        type=Path,
+        default=None,
+        help=(
+            "Override [run].results_csv. Successful rows in this CSV are used "
+            "for resume, and new local results are appended to the same file."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -259,6 +270,24 @@ def read_distance_metric(directory: Path) -> str:
         raise ValueError(f"{path}: unsupported distance metric {raw!r}") from exc
 
 
+def validate_ground_truth_ids(
+    dataset_name: str,
+    ground_truth: Path,
+    corpus_size: int,
+) -> None:
+    ids = np.load(ground_truth, mmap_mode="r")
+    if ids.size == 0:
+        raise ValueError(f"dataset {dataset_name}: ground truth is empty")
+    minimum = int(ids.min())
+    maximum = int(ids.max())
+    if minimum < 0 or maximum >= corpus_size:
+        raise ValueError(
+            f"dataset {dataset_name}: ground-truth IDs [{minimum}, {maximum}] "
+            f"fall outside configured corpus [0, {corpus_size - 1}]; "
+            "the data and ground-truth files do not describe the same corpus"
+        )
+
+
 def load_datasets(config: dict[str, Any], config_dir: Path) -> list[Dataset]:
     entries = config.get("datasets")
     if not isinstance(entries, list) or not entries:
@@ -307,6 +336,7 @@ def load_datasets(config: dict[str, Any], config_dir: Path) -> list[Dataset]:
                 f"dataset {name}: query rows {query_meta.rows} != "
                 f"ground-truth rows {ground_truth_meta.rows}"
             )
+        validate_ground_truth_ids(name, ground_truth, data_meta.rows)
         datasets.append(
             Dataset(
                 name=name,
@@ -734,15 +764,58 @@ def make_run_key(
     )
 
 
-def completed_run_keys(path: Path) -> set[str]:
+def successful_result_rows(path: Path) -> dict[str, dict[str, str]]:
     if not path.is_file():
-        return set()
+        return {}
     with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None or "run_key" not in reader.fieldnames:
+            raise ValueError(f"{path}: results CSV is missing the run_key column")
         return {
-            row["run_key"]
-            for row in csv.DictReader(handle)
-            if row.get("status") == "success"
+            row["run_key"]: row
+            for row in reader
+            if row.get("status") == "success" and row.get("run_key")
         }
+
+
+def completed_run_keys(path: Path) -> set[str]:
+    return set(successful_result_rows(path))
+
+
+def merge_successful_result_rows(
+    destination: Path,
+    rows: dict[str, dict[str, str]],
+) -> int:
+    existing_rows: list[dict[str, str]] = []
+    existing_success: set[str] = set()
+    if destination.is_file():
+        with destination.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None or "run_key" not in reader.fieldnames:
+                raise ValueError(
+                    f"{destination}: results CSV is missing the run_key column"
+                )
+            for row in reader:
+                existing_rows.append(row)
+                if row.get("status") == "success" and row.get("run_key"):
+                    existing_success.add(row["run_key"])
+
+    imported = [row for key, row in rows.items() if key not in existing_success]
+    if not imported:
+        return 0
+    imported_keys = {row["run_key"] for row in imported}
+    existing_rows = [
+        row for row in existing_rows if row.get("run_key") not in imported_keys
+    ]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=RESULT_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for row in existing_rows + imported:
+            writer.writerow({field: row.get(field, "") for field in RESULT_FIELDS})
+    os.replace(temporary, destination)
+    return len(imported)
 
 
 def append_result(path: Path, row: dict[str, Any]) -> None:
@@ -1146,6 +1219,11 @@ def main() -> int:
         config = tomllib.load(handle)
 
     settings = load_settings(config, config_path.parent, args.no_resume)
+    if args.results_csv is not None:
+        settings = replace(
+            settings,
+            results_csv=args.results_csv.expanduser().resolve(),
+        )
     datasets = load_datasets(config, config_path.parent)
     sweep = load_sweep(config)
     quantization_variants = load_quantization_variants(config)
