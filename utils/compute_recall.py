@@ -69,7 +69,16 @@ def parse_args() -> argparse.Namespace:
             "database. Multiple files are concatenated in worker/client order."
         ),
     )
-    parser.add_argument("top_k", type=positive_int, help="Number of IDs per row to compare")
+    parser.add_argument(
+        "--top-k",
+        "-k",
+        dest="top_k",
+        type=positive_int,
+        nargs="+",
+        required=True,
+        metavar="K",
+        help="One or more top-k values to compute recall for (one output row each)",
+    )
     parser.add_argument(
         "--output",
         "-o",
@@ -203,13 +212,16 @@ def query_result_sort_key(matrix: NpyMatrix) -> tuple[int, int, str]:
     return 0, 0, matrix.path.name
 
 
-def compute_recall(
+def compute_recall_multi(
     ground_truth: NpyMatrix,
     query_id_matrices: list[NpyMatrix],
-    top_k: int,
-) -> dict[str, int | float]:
+    top_ks: list[int],
+) -> list[dict[str, int | float]]:
+    """Compute recall@k for every k in top_ks in a single pass over the data."""
     if not query_id_matrices:
         raise ValueError("at least one query-ID matrix is required")
+    if not top_ks:
+        raise ValueError("at least one top-k value is required")
 
     query_id_matrices = sorted(query_id_matrices, key=query_result_sort_key)
     query_rows = sum(matrix.rows for matrix in query_id_matrices)
@@ -218,22 +230,23 @@ def compute_recall(
             "row-count mismatch: "
             f"ground truth has {ground_truth.rows}, query IDs have {query_rows}"
         )
-    if top_k > ground_truth.columns:
+    max_k = max(top_ks)
+    if max_k > ground_truth.columns:
         raise ValueError(
-            f"top-k {top_k} exceeds ground-truth columns {ground_truth.columns}"
+            f"top-k {max_k} exceeds ground-truth columns {ground_truth.columns}"
         )
     for matrix in query_id_matrices:
-        if top_k > matrix.columns:
+        if max_k > matrix.columns:
             raise ValueError(
-                f"top-k {top_k} exceeds query-ID columns {matrix.columns} in {matrix.path}"
+                f"top-k {max_k} exceeds query-ID columns {matrix.columns} "
+                f"in {matrix.path}"
             )
 
-    recall_sum = 0.0
-    recall_square_sum = 0.0
-    min_recall = 1.0
-    max_recall = 0.0
-    perfect_queries = 0
-    total_matches = 0
+    # Per-k accumulators — initialise min_recall to 1.0 (worst possible stays 0).
+    accums: dict[int, list[float]] = {
+        k: [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]  # recall_sum, sq_sum, min, max, matches, perfect
+        for k in top_ks
+    }
 
     for row_index, (expected_row, actual_row) in enumerate(
         zip(
@@ -241,68 +254,77 @@ def compute_recall(
             chain.from_iterable(matrix.iter_rows() for matrix in query_id_matrices),
         )
     ):
-        expected = expected_row[:top_k]
-        if any(point_id < 0 for point_id in expected):
+        # Validate against max_k once per row; smaller k values are a subset.
+        max_expected = expected_row[:max_k]
+        if any(point_id < 0 for point_id in max_expected):
             raise ValueError(
                 f"{ground_truth.path}: negative ground-truth ID in row {row_index}"
             )
-
-        expected_set = set(expected)
-        if len(expected_set) != top_k:
+        if len(set(max_expected)) != max_k:
             raise ValueError(
                 f"{ground_truth.path}: duplicate ground-truth ID in row {row_index}"
             )
 
-        actual_set = {point_id for point_id in actual_row[:top_k] if point_id >= 0}
-        matches = len(expected_set.intersection(actual_set))
-        recall = matches / top_k
-
-        total_matches += matches
-        recall_sum += recall
-        recall_square_sum += recall * recall
-        min_recall = min(min_recall, recall)
-        max_recall = max(max_recall, recall)
-        if matches == top_k:
-            perfect_queries += 1
+        for k in top_ks:
+            expected_set = set(expected_row[:k])
+            actual_set = {pid for pid in actual_row[:k] if pid >= 0}
+            matches = len(expected_set.intersection(actual_set))
+            recall = matches / k
+            acc = accums[k]
+            acc[0] += recall
+            acc[1] += recall * recall
+            if recall < acc[2]:
+                acc[2] = recall
+            if recall > acc[3]:
+                acc[3] = recall
+            acc[4] += matches
+            if matches == k:
+                acc[5] += 1
 
     query_count = ground_truth.rows
-    mean_recall = recall_sum / query_count
-    variance = max(0.0, recall_square_sum / query_count - mean_recall**2)
-    return {
-        "top_k": top_k,
-        "query_count": query_count,
-        "total_matches": total_matches,
-        "total_possible_matches": query_count * top_k,
-        "mean_recall_at_k": mean_recall,
-        "min_recall_at_k": min_recall,
-        "max_recall_at_k": max_recall,
-        "stddev_recall_at_k": math.sqrt(variance),
-        "perfect_query_count": perfect_queries,
-        "perfect_query_fraction": perfect_queries / query_count,
-    }
+    results = []
+    for k in sorted(top_ks):
+        recall_sum, sq_sum, min_r, max_r, total_matches, perfect = accums[k]
+        mean_recall = recall_sum / query_count
+        variance = max(0.0, sq_sum / query_count - mean_recall ** 2)
+        results.append({
+            "top_k": k,
+            "query_count": query_count,
+            "total_matches": int(total_matches),
+            "total_possible_matches": query_count * k,
+            "mean_recall_at_k": mean_recall,
+            "min_recall_at_k": min_r,
+            "max_recall_at_k": max_r,
+            "stddev_recall_at_k": math.sqrt(variance),
+            "perfect_query_count": int(perfect),
+            "perfect_query_fraction": perfect / query_count,
+        })
+    return results
 
 
-def write_recall_csv(path: Path, summary: dict[str, int | float]) -> None:
+def write_recall_csv(path: Path, summaries: list[dict[str, int | float]]) -> None:
     output = path.expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = list(summary)
+    fieldnames = list(summaries[0]) if summaries else []
     with output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerow(summary)
+        for row in summaries:
+            writer.writerow(row)
 
 
 def main() -> None:
     args = parse_args()
     ground_truth = load_npy_matrix(args.ground_truth)
     query_id_matrices = [load_npy_matrix(path) for path in args.query_ids]
-    summary = compute_recall(ground_truth, query_id_matrices, args.top_k)
-    write_recall_csv(args.output, summary)
-    print(
-        f"wrote {args.output.expanduser().resolve()} "
-        f"(recall@{args.top_k}={summary['mean_recall_at_k']:.6f}, "
-        f"queries={summary['query_count']})"
-    )
+    summaries = compute_recall_multi(ground_truth, query_id_matrices, sorted(set(args.top_k)))
+    write_recall_csv(args.output, summaries)
+    for s in summaries:
+        print(
+            f"wrote {args.output.expanduser().resolve()} "
+            f"(recall@{s['top_k']}={s['mean_recall_at_k']:.6f}, "
+            f"queries={s['query_count']})"
+        )
 
 
 if __name__ == "__main__":

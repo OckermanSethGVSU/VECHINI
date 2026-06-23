@@ -1047,7 +1047,7 @@ calculate_recall_if_enabled() {
     env "${PYTHON_ENV_VARS[@]}" python3 ./compute_recall.py \
         "$GROUND_TRUTH_FILEPATH" \
         "${query_id_files[@]}" \
-        "${TOP_K:-10}" \
+        --top-k "${TOP_K:-10}" \
         --output recall.csv
 }
 
