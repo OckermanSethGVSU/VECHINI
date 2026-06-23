@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 QDRANT_DIR = REPO_ROOT / "qdrant"
 CONFIGURE_COLLECTION = QDRANT_DIR / "scripts" / "configure_collection.py"
 BUILD_INDEX = QDRANT_DIR / "scripts" / "build_index.py"
+UPDATE_QUANTIZATION = QDRANT_DIR / "scripts" / "update_quantization.py"
 COMPUTE_RECALL = REPO_ROOT / "utils" / "compute_recall.py"
 
 RESULT_FIELDS = [
@@ -171,6 +172,39 @@ class RunSettings:
     keep_container: bool
     resume: bool
     rpc_timeout: str
+    health_timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class CollectionTarget:
+    dataset: Dataset
+    segments: int
+    quantization: QuantizationVariant
+
+
+@dataclass(frozen=True)
+class InsertionTarget:
+    """Identifies a unique inserted collection — keyed by dataset+segments only.
+
+    Quantization is excluded because it can be changed live without reinserting.
+    """
+    dataset: Dataset
+    segments: int
+
+
+@dataclass
+class CollectionState:
+    collection_name: str
+    collection_dir: Path
+    build_dir: Path
+    base_env: dict[str, str]
+    data_size_bytes: int
+    segment_size_kb: int
+    insert_time: float
+    current_quantization: QuantizationVariant | None = None
+    current_graph: tuple[int, int] | None = None
+    index_time: float = 0.0
+    actual_segments: Any = ""
 
 
 def parse_args() -> argparse.Namespace:
@@ -419,6 +453,10 @@ def load_settings(
         keep_container=bool(run.get("keep_container", False)),
         resume=bool(run.get("resume", True)) and not no_resume,
         rpc_timeout=str(run.get("rpc_timeout", "")).strip(),
+        health_timeout_seconds=require_positive_int(
+            run.get("health_timeout_seconds", 900),
+            "run.health_timeout_seconds",
+        ),
     )
 
 
@@ -452,6 +490,52 @@ def effective_query_pairs(sweep: dict[str, list[Any]]) -> list[tuple[int, int]]:
             pairs.append(pair)
             seen.add(pair)
     return pairs
+
+
+def prioritized_collection_targets(
+    datasets: list[Dataset],
+    segments_values: list[int],
+    quantization_variants: list[QuantizationVariant],
+) -> list[CollectionTarget]:
+    none_variants = [
+        variant
+        for variant in quantization_variants
+        if variant.quantization_type == "NONE"
+    ]
+    if not none_variants:
+        raise ValueError(
+            "priority scheduling requires an enabled NONE quantization variant"
+        )
+
+    first_segments = segments_values[0]
+    baseline = none_variants[0]
+    ordered: list[CollectionTarget] = []
+    seen: set[CollectionTarget] = set()
+
+    def add(dataset: Dataset, segments: int, variant: QuantizationVariant) -> None:
+        target = CollectionTarget(dataset, segments, variant)
+        if target not in seen:
+            ordered.append(target)
+            seen.add(target)
+
+    # First establish an unquantized baseline for every dataset.
+    for dataset in datasets:
+        add(dataset, first_segments, baseline)
+
+    # Then all variants for each dataset together, so all quantization variants
+    # for one (dataset, segments) are consecutive. This lets the sweep reuse the
+    # inserted collection across variants instead of reinserting on each encounter.
+    for dataset in datasets:
+        for variant in quantization_variants:
+            add(dataset, first_segments, variant)
+
+    # Finally fill in all remaining segment counts, grouped the same way.
+    for segments in segments_values:
+        for dataset in datasets:
+            for variant in quantization_variants:
+                add(dataset, segments, variant)
+
+    return ordered
 
 
 def load_quantization_variants(config: dict[str, Any]) -> list[QuantizationVariant]:
@@ -686,14 +770,17 @@ def start_container(runtime: str, settings: RunSettings) -> bool:
         created = True
 
     health_url = f"http://{settings.host}:{settings.http_port}/healthz"
-    for _ in range(120):
+    for _ in range(settings.health_timeout_seconds):
         try:
             with urllib.request.urlopen(health_url, timeout=2) as response:
                 if response.status == 200:
                     return created
         except OSError:
             time.sleep(1)
-    raise RuntimeError(f"Qdrant did not become healthy at {health_url}")
+    raise RuntimeError(
+        f"Qdrant did not become healthy at {health_url} within "
+        f"{settings.health_timeout_seconds} seconds"
+    )
 
 
 def stop_container(runtime: str, settings: RunSettings) -> None:
@@ -954,9 +1041,16 @@ def print_plan(
             f"product_compression={variant.product_compression}, "
             f"turbo_bits={variant.turbo_bits}"
         )
+    insertions = len(datasets) * len(sweep["number_of_segments"])
+    quant_updates = insertions * (len(quantization_variants) - 1)
+    print(f"insertions (dataset × segments): {insertions}")
     print(
-        "collection loads: "
-        f"{len(datasets) * len(sweep['number_of_segments']) * len(quantization_variants)}"
+        f"quantization updates per hnsw pass: {quant_updates} "
+        f"(quantization changed live; no reinsertion)"
+    )
+    print(
+        "priority order: NONE baseline first per dataset; then all quantization "
+        "variants grouped per dataset so each dataset stays consecutive"
     )
     print(
         "index builds: "
@@ -987,114 +1081,167 @@ def execute_sweep(
 
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     completed = completed_run_keys(settings.results_csv) if settings.resume else set()
+    targets = prioritized_collection_targets(
+        datasets,
+        sweep["number_of_segments"],
+        quantization_variants,
+    )
     runtime = detect_container_runtime()
     start_container(runtime, settings)
     executed = 0
     query_pairs = effective_query_pairs(sweep)
+    # Keyed by (dataset, segments) — quantization is changed live, not by reinsertion.
+    insertion_states: dict[InsertionTarget, CollectionState] = {}
 
     try:
-        for dataset in datasets:
-            for segments, quantization in itertools.product(
-                sweep["number_of_segments"], quantization_variants
-            ):
-                data_size_bytes = (
-                    dataset.data_meta.rows
-                    * dataset.data_meta.columns
-                    * dataset.data_meta.item_size
-                )
-                segment_size_kb = math.ceil(
-                    data_size_bytes / segments / 1024
-                )
-                collection_name = safe_name(
-                    f"sweep_{dataset.name}_{segments}_{quantization.name}"
-                )[:200]
-                collection_dir = (
-                    settings.output_dir
-                    / "runs"
-                    / safe_name(dataset.name)
-                    / f"segments_{segments}"
-                    / safe_name(quantization.name)
-                )
-                build_dir = collection_dir / "build"
-                build_dir.mkdir(parents=True, exist_ok=True)
-                write_registry(build_dir / "ip_registry.txt", settings)
-                base_env = base_environment(
-                    settings,
-                    dataset,
-                    collection_name,
-                    segments,
-                    segment_size_kb,
-                    quantization,
-                    sweep["top_k"],
-                )
-
-                pending_builds: list[tuple[int, int, list[tuple[int, int]]]] = []
-                for hnsw_m, ef_construct in itertools.product(
-                    sweep["hnsw_m"], sweep["ef_construct"]
-                ):
-                    pending_searches = [
-                        (ef_search, top_k)
-                        for ef_search, top_k in query_pairs
-                        if make_run_key(
-                            dataset,
-                            segments,
-                            quantization,
-                            hnsw_m,
-                            ef_construct,
-                            ef_search,
-                            top_k,
-                        )
-                        not in completed
-                    ]
-                    if pending_searches:
-                        pending_builds.append((hnsw_m, ef_construct, pending_searches))
-                if not pending_builds:
-                    continue
-
-                initial_m, initial_ef_construct, _ = pending_builds[0]
-                collection_env = dict(base_env)
-                collection_env.update(
-                    {
-                        "ACTIVE_TASK": "INSERT",
-                        "HNSW_M": str(initial_m),
-                        "HNSW_EF_CONSTRUCTION": str(initial_ef_construct),
-                    }
-                )
-                write_run_config(build_dir, collection_env)
-
-                run_command(
-                    [sys.executable, str(CONFIGURE_COLLECTION)],
-                    build_dir,
-                    collection_env,
-                    collection_dir / "configure.log",
-                )
-                ready_flag = build_dir / "ready.flag"
-                if ready_flag.exists():
-                    ready_flag.unlink()
-                run_command(
-                    [str(settings.batch_client)],
-                    build_dir,
-                    collection_env,
-                    collection_dir / "insert.log",
-                )
-                insert_time = read_rank_zero_total(build_dir / "insert_times.csv")
-
-                for hnsw_m, ef_construct, pending_searches in pending_builds:
-                    index_dir = (
-                        collection_dir
-                        / f"m_{hnsw_m}"
-                        / f"ef_construct_{ef_construct}"
+        # Graph settings are outermost. For each prioritized collection target,
+        # build the graph once and immediately run its full query sweep before
+        # moving to the next dataset/quantization target.
+        for hnsw_m, ef_construct in itertools.product(
+            sweep["hnsw_m"],
+            sweep["ef_construct"],
+        ):
+            for target in targets:
+                dataset = target.dataset
+                segments = target.segments
+                quantization = target.quantization
+                pending_query_pairs = [
+                    (ef_search, top_k)
+                    for ef_search, top_k in query_pairs
+                    if make_run_key(
+                        dataset,
+                        segments,
+                        quantization,
+                        hnsw_m,
+                        ef_construct,
+                        ef_search,
+                        top_k,
                     )
-                    index_dir.mkdir(parents=True, exist_ok=True)
-                    write_registry(index_dir / "ip_registry.txt", settings)
-                    index_env = dict(base_env)
-                    index_env.update(
+                    not in completed
+                ]
+                if not pending_query_pairs:
+                    continue
+                if limit is not None and executed >= limit:
+                    return
+
+                insertion_key = InsertionTarget(dataset, segments)
+                state = insertion_states.get(insertion_key)
+                if state is None:
+                    data_size_bytes = (
+                        dataset.data_meta.rows
+                        * dataset.data_meta.columns
+                        * dataset.data_meta.item_size
+                    )
+                    segment_size_kb = math.ceil(
+                        data_size_bytes / segments / 1024
+                    )
+                    # Collection name and dir are keyed by dataset+segments only;
+                    # quantization lives in the index subdirectory.
+                    collection_name = safe_name(
+                        f"sweep_{dataset.name}_{segments}"
+                    )[:200]
+                    collection_dir = (
+                        settings.output_dir
+                        / "runs"
+                        / safe_name(dataset.name)
+                        / f"segments_{segments}"
+                    )
+                    build_dir = collection_dir / "build"
+                    build_dir.mkdir(parents=True, exist_ok=True)
+                    write_registry(build_dir / "ip_registry.txt", settings)
+                    base_env = base_environment(
+                        settings,
+                        dataset,
+                        collection_name,
+                        segments,
+                        segment_size_kb,
+                        quantization,
+                        sweep["top_k"],
+                    )
+                    collection_env = dict(base_env)
+                    collection_env.update(
                         {
-                            "ACTIVE_TASK": "INDEX",
+                            "ACTIVE_TASK": "INSERT",
                             "HNSW_M": str(hnsw_m),
                             "HNSW_EF_CONSTRUCTION": str(ef_construct),
                         }
                     )
+                    write_run_config(build_dir, collection_env)
+                    run_command(
+                        [sys.executable, str(CONFIGURE_COLLECTION)],
+                        build_dir,
+                        collection_env,
+                        collection_dir / "configure.log",
+                    )
+                    ready_flag = build_dir / "ready.flag"
+                    if ready_flag.exists():
+                        ready_flag.unlink()
+                    run_command(
+                        [str(settings.batch_client)],
+                        build_dir,
+                        collection_env,
+                        collection_dir / "insert.log",
+                    )
+                    state = CollectionState(
+                        collection_name=collection_name,
+                        collection_dir=collection_dir,
+                        build_dir=build_dir,
+                        base_env=base_env,
+                        data_size_bytes=data_size_bytes,
+                        segment_size_kb=segment_size_kb,
+                        insert_time=read_rank_zero_total(
+                            build_dir / "insert_times.csv"
+                        ),
+                        current_quantization=quantization,
+                    )
+                    insertion_states[insertion_key] = state
+
+                # Quantization can be changed live without reinsertion.
+                # When the target quantization differs from what the collection
+                # currently has, update it in place and wait for GREEN.
+                if state.current_quantization != quantization:
+                    quant_dir = (
+                        state.collection_dir
+                        / "quant_updates"
+                        / safe_name(quantization.name)
+                    )
+                    quant_dir.mkdir(parents=True, exist_ok=True)
+                    write_registry(quant_dir / "ip_registry.txt", settings)
+                    quant_env = dict(state.base_env)
+                    quant_env.update({"QUANTIZATION_VARIANT": quantization.name})
+                    quant_env.update(quantization.environment())
+                    write_run_config(quant_dir, quant_env)
+                    run_command(
+                        [sys.executable, str(UPDATE_QUANTIZATION)],
+                        quant_dir,
+                        quant_env,
+                        quant_dir / "update_quantization.log",
+                    )
+                    state.base_env.update(
+                        {"QUANTIZATION_VARIANT": quantization.name}
+                    )
+                    state.base_env.update(quantization.environment())
+                    state.current_quantization = quantization
+
+                graph = (hnsw_m, ef_construct)
+                # Index dir includes quantization name so results stay separate.
+                index_dir = (
+                    state.collection_dir
+                    / safe_name(quantization.name)
+                    / f"m_{hnsw_m}"
+                    / f"ef_construct_{ef_construct}"
+                )
+                index_dir.mkdir(parents=True, exist_ok=True)
+                write_registry(index_dir / "ip_registry.txt", settings)
+                index_env = dict(state.base_env)
+                index_env.update(
+                    {
+                        "ACTIVE_TASK": "INDEX",
+                        "HNSW_M": str(hnsw_m),
+                        "HNSW_EF_CONSTRUCTION": str(ef_construct),
+                    }
+                )
+                if state.current_graph != graph:
                     write_run_config(index_dir, index_env)
                     run_command(
                         [sys.executable, str(BUILD_INDEX)],
@@ -1102,111 +1249,115 @@ def execute_sweep(
                         index_env,
                         index_dir / "index.log",
                     )
-                    index_time = float(
+                    state.index_time = float(
                         (index_dir / "index_time.txt").read_text(encoding="utf-8")
                     )
-                    collection_info = query_collection_info(settings, collection_name)
-                    actual_segments = collection_info.get("segments_count", "")
+                    collection_info = query_collection_info(
+                        settings,
+                        state.collection_name,
+                    )
+                    state.actual_segments = collection_info.get(
+                        "segments_count", ""
+                    )
+                    state.current_graph = graph
 
-                    for ef_search, top_k in pending_searches:
-                        if limit is not None and executed >= limit:
-                            return
-                        run_key = make_run_key(
-                            dataset,
-                            segments,
-                            quantization,
-                            hnsw_m,
-                            ef_construct,
-                            ef_search,
-                            top_k,
-                        )
-                        query_dir = (
-                            index_dir
-                            / f"ef_search_{ef_search}"
-                            / f"top_k_{top_k}"
-                        )
-                        query_dir.mkdir(parents=True, exist_ok=True)
-                        write_registry(query_dir / "ip_registry.txt", settings)
-                        query_env = dict(index_env)
-                        query_env.update(
-                            {
-                                "ACTIVE_TASK": "QUERY",
-                                "HNSW_EF_SEARCH": str(ef_search),
-                                "TOP_K": str(top_k),
-                            }
-                        )
-                        write_run_config(query_dir, query_env)
-                        row: dict[str, Any] = {
-                            "run_key": run_key,
-                            "status": "failed",
-                            "dataset": dataset.name,
-                            "data_file": dataset.data,
-                            "query_file": dataset.queries,
-                            "ground_truth_file": dataset.ground_truth,
-                            "corpus_size": dataset.data_meta.rows,
-                            "query_count": dataset.query_meta.rows,
-                            "vector_dim": dataset.data_meta.columns,
-                            "data_size_bytes": data_size_bytes,
-                            "distance_metric": dataset.distance_metric,
-                            "qdrant_image": settings.image,
-                            "number_of_segments": segments,
-                            "segment_size_kb": segment_size_kb,
-                            "actual_segments": actual_segments,
-                            "quantization_variant": quantization.name,
-                            "quantization": quantization.quantization_type,
-                            "quantization_always_ram": quantization.always_ram,
-                            "quantization_scalar_quantile": quantization.scalar_quantile,
-                            "quantization_binary_encoding": quantization.binary_encoding,
-                            "quantization_product_compression": quantization.product_compression,
-                            "quantization_turbo_bits": quantization.turbo_bits,
-                            "hnsw_m": hnsw_m,
-                            "ef_construct": ef_construct,
-                            "ef_search": ef_search,
-                            "top_k": top_k,
-                            "top_k_execution_mode": "INDIVIDUAL",
-                            "insert_time_s": insert_time,
-                            "index_time_s": index_time,
-                            "result_dir": query_dir,
+                for ef_search, top_k in pending_query_pairs:
+                    if limit is not None and executed >= limit:
+                        return
+                    run_key = make_run_key(
+                        dataset,
+                        segments,
+                        quantization,
+                        hnsw_m,
+                        ef_construct,
+                        ef_search,
+                        top_k,
+                    )
+                    query_dir = (
+                        index_dir / f"ef_search_{ef_search}" / f"top_k_{top_k}"
+                    )
+                    query_dir.mkdir(parents=True, exist_ok=True)
+                    write_registry(query_dir / "ip_registry.txt", settings)
+                    query_env = dict(index_env)
+                    query_env.update(
+                        {
+                            "ACTIVE_TASK": "QUERY",
+                            "HNSW_EF_SEARCH": str(ef_search),
+                            "TOP_K": str(top_k),
                         }
-                        try:
-                            run_command(
-                                [str(settings.batch_client)],
-                                query_dir,
-                                query_env,
-                                query_dir / "query.log",
-                            )
-                            row["query_time_s"] = read_rank_zero_total(
-                                query_dir / "query_times.csv"
-                            )
-                            recall_path = query_dir / "recall.csv"
-                            run_command(
-                                [
-                                    sys.executable,
-                                    str(COMPUTE_RECALL),
-                                    str(dataset.ground_truth),
-                                    str(query_dir / "query_result_ids.npy"),
-                                    str(top_k),
-                                    "--output",
-                                    str(recall_path),
-                                ],
-                                query_dir,
-                                query_env,
-                                query_dir / "recall.log",
-                            )
-                            row.update(read_single_csv_row(recall_path))
-                            row["status"] = "success"
-                            completed.add(run_key)
-                        except Exception as exc:
-                            row["error"] = str(exc)
-                        append_result(settings.results_csv, row)
-                        executed += 1
-                        if row["status"] == "success":
-                            print(
-                                f"[{executed}] {run_key}: "
-                                f"recall={row['mean_recall_at_k']}"
-                            )
-                        else:
-                            print(f"[{executed}] {run_key}: failed: {row['error']}")
+                    )
+                    write_run_config(query_dir, query_env)
+                    row: dict[str, Any] = {
+                        "run_key": run_key,
+                        "status": "failed",
+                        "dataset": dataset.name,
+                        "data_file": dataset.data,
+                        "query_file": dataset.queries,
+                        "ground_truth_file": dataset.ground_truth,
+                        "corpus_size": dataset.data_meta.rows,
+                        "query_count": dataset.query_meta.rows,
+                        "vector_dim": dataset.data_meta.columns,
+                        "data_size_bytes": state.data_size_bytes,
+                        "distance_metric": dataset.distance_metric,
+                        "qdrant_image": settings.image,
+                        "number_of_segments": segments,
+                        "segment_size_kb": state.segment_size_kb,
+                        "actual_segments": state.actual_segments,
+                        "quantization_variant": quantization.name,
+                        "quantization": quantization.quantization_type,
+                        "quantization_always_ram": quantization.always_ram,
+                        "quantization_scalar_quantile": quantization.scalar_quantile,
+                        "quantization_binary_encoding": quantization.binary_encoding,
+                        "quantization_product_compression": quantization.product_compression,
+                        "quantization_turbo_bits": quantization.turbo_bits,
+                        "hnsw_m": hnsw_m,
+                        "ef_construct": ef_construct,
+                        "ef_search": ef_search,
+                        "top_k": top_k,
+                        "top_k_execution_mode": "INDIVIDUAL",
+                        "insert_time_s": state.insert_time,
+                        "index_time_s": state.index_time,
+                        "result_dir": query_dir,
+                    }
+                    try:
+                        run_command(
+                            [str(settings.batch_client)],
+                            query_dir,
+                            query_env,
+                            query_dir / "query.log",
+                        )
+                        row["query_time_s"] = read_rank_zero_total(
+                            query_dir / "query_times.csv"
+                        )
+                        recall_path = query_dir / "recall.csv"
+                        run_command(
+                            [
+                                sys.executable,
+                                str(COMPUTE_RECALL),
+                                str(dataset.ground_truth),
+                                str(query_dir / "query_result_ids.npy"),
+                                str(top_k),
+                                "--output",
+                                str(recall_path),
+                            ],
+                            query_dir,
+                            query_env,
+                            query_dir / "recall.log",
+                        )
+                        row.update(read_single_csv_row(recall_path))
+                        row["status"] = "success"
+                        completed.add(run_key)
+                    except Exception as exc:
+                        row["error"] = str(exc)
+                    append_result(settings.results_csv, row)
+                    executed += 1
+                    if row["status"] == "success":
+                        print(
+                            f"[{executed}] {run_key}: "
+                            f"recall={row['mean_recall_at_k']}"
+                        )
+                    else:
+                        print(f"[{executed}] {run_key}: failed: {row['error']}")
     finally:
         if not settings.keep_container:
             stop_container(runtime, settings)
@@ -1227,6 +1378,11 @@ def main() -> int:
     datasets = load_datasets(config, config_path.parent)
     sweep = load_sweep(config)
     quantization_variants = load_quantization_variants(config)
+    prioritized_collection_targets(
+        datasets,
+        sweep["number_of_segments"],
+        quantization_variants,
+    )
     if max(sweep["top_k"]) > min(
         dataset.ground_truth_meta.columns for dataset in datasets
     ):
