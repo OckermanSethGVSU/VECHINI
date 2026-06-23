@@ -57,6 +57,23 @@ def env_int(name, default):
         return default
     return int(value.strip())
 
+
+def status_name(value):
+    return str(value).split(".")[-1].strip().lower()
+
+
+def optimizer_status_ok(value):
+    if isinstance(value, dict):
+        return value.get("ok") is not None or value.get("status") == "ok"
+    return status_name(value) == "ok"
+
+
+def collection_is_ready(info):
+    return (
+        info.status == models.CollectionStatus.GREEN
+        and optimizer_status_ok(getattr(info, "optimizer_status", None))
+    )
+
 # ---------- Main ----------
 def main():
     
@@ -83,7 +100,7 @@ def main():
     # wait for changes to take effect
     while True:
         info = client.get_collection(collection_name)
-        if info.status == models.CollectionStatus.GREEN:
+        if collection_is_ready(info):
             break
         time.sleep(0.25)
 
@@ -106,7 +123,7 @@ def main():
     )
     while True:
         info = client.get_collection(collection_name)
-        if info.status == models.CollectionStatus.GREEN:
+        if collection_is_ready(info):
             t2 = time.time()
             if mark_workflow:
                 mark_perf_event("workflow_stop.txt")
@@ -121,7 +138,7 @@ def main():
         )
         while True:
             info = client.get_collection(collection_name)
-            if info.status == models.CollectionStatus.GREEN:
+            if collection_is_ready(info):
                 break
             time.sleep(0.01)
 

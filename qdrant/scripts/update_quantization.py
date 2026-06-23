@@ -1,4 +1,4 @@
-"""Update quantization config on an existing collection and wait for GREEN."""
+"""Update quantization config on an existing collection and wait until settled."""
 import json
 import os
 import time
@@ -72,19 +72,32 @@ def build_quantization_config():
             raise ValueError(f"Unknown quantization type: {quantization_type}")
 
 
-def wait_for_green(host: str, rest_port: int, collection_name: str, timeout: int = 3600) -> None:
+def optimizer_status_ok(value) -> bool:
+    if isinstance(value, dict):
+        return value.get("ok") is not None or value.get("status") == "ok"
+    return str(value).split(".")[-1].strip().lower() == "ok"
+
+
+def collection_is_ready(result: dict) -> bool:
+    return (
+        str(result.get("status", "")).lower() == "green"
+        and optimizer_status_ok(result.get("optimizer_status"))
+    )
+
+
+def wait_for_ready(host: str, rest_port: int, collection_name: str, timeout: int = 3600) -> None:
     url = f"http://{host}:{rest_port}/collections/{collection_name}"
     for _ in range(timeout):
         try:
             with urllib.request.urlopen(url, timeout=5) as resp:
                 info = json.load(resp)
-            if info.get("result", {}).get("status") == "green":
+            if collection_is_ready(info.get("result", {})):
                 return
         except OSError:
             pass
         time.sleep(1)
     raise RuntimeError(
-        f"collection {collection_name!r} did not become GREEN within {timeout}s"
+        f"collection {collection_name!r} did not become GREEN with optimizer_status=ok within {timeout}s"
     )
 
 
@@ -123,7 +136,7 @@ def main() -> None:
             quantization_config=quantization_config,
         )
 
-    wait_for_green(base_ip, rest_port, collection_name)
+    wait_for_ready(base_ip, rest_port, collection_name)
     print(
         f"Updated quantization to {quantization_type} for {collection_name!r}",
         flush=True,
