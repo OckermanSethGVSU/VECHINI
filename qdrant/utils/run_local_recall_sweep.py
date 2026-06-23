@@ -5,16 +5,20 @@ from __future__ import annotations
 
 import argparse
 import ast
+import concurrent.futures
 import csv
+import hashlib
 import itertools
 import json
 import math
 import os
+import random
 import shlex
 import shutil
 import struct
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import urllib.request
@@ -60,6 +64,7 @@ RESULT_FIELDS = [
     "ef_construct",
     "ef_search",
     "top_k",
+    "physical_top_k",
     "top_k_execution_mode",
     "insert_time_s",
     "index_time_s",
@@ -173,6 +178,7 @@ class RunSettings:
     resume: bool
     rpc_timeout: str
     health_timeout_seconds: int
+    parallel_top_k_workers: int
 
 
 @dataclass(frozen=True)
@@ -190,6 +196,14 @@ class InsertionTarget:
     """
     dataset: Dataset
     segments: int
+
+
+@dataclass(frozen=True)
+class QueryPlan:
+    """One physical Qdrant query for one logical top_k value."""
+    ef_search: int
+    physical_top_k: int
+    logical_top_ks: tuple[int, ...]
 
 
 @dataclass
@@ -291,6 +305,66 @@ def read_npy_metadata(path: Path) -> NpyMetadata:
     if item_size <= 0:
         raise ValueError(f"{path}: invalid NPY item size in dtype {dtype!r}")
     return NpyMetadata(int(shape[0]), int(shape[1]), dtype, item_size)
+
+
+def read_run_config_env(path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not path.is_file():
+        return env
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            parts = shlex.split(line)
+        except ValueError:
+            return {}
+        if len(parts) != 1 or "=" not in parts[0]:
+            return {}
+        key, value = parts[0].split("=", 1)
+        env[key] = value
+    return env
+
+
+def reusable_query_artifacts(
+    query_dir: Path,
+    physical_top_k: int,
+    expected_rows: int | None = None,
+    expected_env: dict[str, str] | None = None,
+) -> bool:
+    """Return True only if query artifacts exist, are wide enough, and match this run."""
+    result_ids_path = query_dir / "query_result_ids.npy"
+    times_csv = query_dir / "query_times.csv"
+    if not result_ids_path.is_file() or not times_csv.is_file():
+        return False
+    if expected_env is not None:
+        existing_env = read_run_config_env(query_dir / "run_config.env")
+        if not existing_env:
+            return False
+        for key, value in expected_env.items():
+            if existing_env.get(key) != str(value):
+                return False
+    try:
+        metadata = read_npy_metadata(result_ids_path)
+    except Exception:
+        return False
+    if expected_rows is not None and metadata.rows != expected_rows:
+        return False
+    return metadata.columns >= physical_top_k
+
+
+def remove_query_artifacts(query_dir: Path) -> None:
+    for filename in ("query_result_ids.npy", "query_times.csv", "recall.csv"):
+        (query_dir / filename).unlink(missing_ok=True)
+
+
+def _file_digest(path: Path) -> bytes:
+    """MD5 digest of a file, read in 1 MiB chunks. Used only for equality checks."""
+    h = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            h.update(chunk)
+    return h.digest()
 
 
 def read_distance_metric(directory: Path) -> str:
@@ -457,6 +531,10 @@ def load_settings(
             run.get("health_timeout_seconds", 900),
             "run.health_timeout_seconds",
         ),
+        parallel_top_k_workers=require_positive_int(
+            run.get("parallel_top_k_workers", 1),
+            "run.parallel_top_k_workers",
+        ),
     )
 
 
@@ -479,17 +557,30 @@ def load_sweep(config: dict[str, Any]) -> dict[str, list[Any]]:
     return result
 
 
-def effective_query_pairs(sweep: dict[str, list[Any]]) -> list[tuple[int, int]]:
-    pairs: list[tuple[int, int]] = []
+def effective_query_plans(sweep: dict[str, list[Any]]) -> list[QueryPlan]:
+    """Build the physical query plan for a sweep.
+
+    Reconstructs the logical pair set with Qdrant's effective efSearch rule:
+    ef_search = max(requested_ef_search, top_k).  Each logical top_k gets its
+    own physical query because Qdrant's search path can depend on top_k.
+    """
     seen: set[tuple[int, int]] = set()
-    for top_k, requested_ef_search in itertools.product(
-        sweep["top_k"], sweep["ef_search"]
-    ):
-        pair = (max(requested_ef_search, top_k), top_k)
-        if pair not in seen:
-            pairs.append(pair)
-            seen.add(pair)
-    return pairs
+    plans: list[QueryPlan] = []
+    for requested_ef_search in sweep["ef_search"]:
+        for top_k in sweep["top_k"]:
+            ef_search = max(requested_ef_search, top_k)
+            key = (ef_search, top_k)
+            if key in seen:
+                continue
+            seen.add(key)
+            plans.append(
+                QueryPlan(
+                    ef_search=ef_search,
+                    physical_top_k=top_k,
+                    logical_top_ks=(top_k,),
+                )
+            )
+    return sorted(plans, key=lambda plan: (plan.ef_search, plan.physical_top_k))
 
 
 def prioritized_collection_targets(
@@ -529,8 +620,12 @@ def prioritized_collection_targets(
         for variant in quantization_variants:
             add(dataset, first_segments, variant)
 
-    # Finally fill in all remaining segment counts, grouped the same way.
-    for segments in segments_values:
+    # Fill in all remaining segment counts in random order so the sweep samples
+    # the space less predictably.  first_segments is already handled above and
+    # will be skipped by the seen-set, so shuffle all values equally.
+    remaining = list(segments_values)
+    random.shuffle(remaining)
+    for segments in remaining:
         for dataset in datasets:
             for variant in quantization_variants:
                 add(dataset, segments, variant)
@@ -806,12 +901,105 @@ def read_rank_zero_total(path: Path) -> float:
     raise ValueError(f"{path}: rank 0 total_s not found")
 
 
+def read_recall_csv(path: Path) -> dict[int, dict[str, str]]:
+    """Read a multi-row recall CSV produced by compute_recall.py, keyed by top_k."""
+    with path.open(newline="", encoding="utf-8") as handle:
+        return {int(row["top_k"]): row for row in csv.DictReader(handle)}
+
+
 def read_single_csv_row(path: Path) -> dict[str, str]:
     with path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     if len(rows) != 1:
         raise ValueError(f"{path}: expected exactly one data row")
     return rows[0]
+
+
+def write_recall_csv_local(path: Path, summaries: list[dict[str, Any]]) -> None:
+    """Write a recall CSV in the same format as compute_recall.py produces."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(summaries[0]) if summaries else []
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in summaries:
+            writer.writerow(row)
+
+
+def compute_recall_inline(
+    gt_arr: np.ndarray,
+    qr_path: Path,
+    top_ks: list[int],
+) -> list[dict[str, Any]]:
+    """Compute recall@k without spawning a subprocess.
+
+    Uses numpy mmap for I/O and searchsorted for intersection counting.
+    Numerically equivalent to compute_recall.py's compute_recall_multi.
+    """
+    qr = np.load(qr_path, mmap_mode="r")
+    n = gt_arr.shape[0]
+    max_k = max(top_ks)
+    if n != qr.shape[0]:
+        raise ValueError(
+            f"row-count mismatch: ground truth has {n} rows, "
+            f"query results have {qr.shape[0]}"
+        )
+    if max_k > gt_arr.shape[1]:
+        raise ValueError(
+            f"top_k {max_k} exceeds ground-truth columns {gt_arr.shape[1]}"
+        )
+    if max_k > qr.shape[1]:
+        raise ValueError(
+            f"top_k {max_k} exceeds result columns {qr.shape[1]}"
+        )
+
+    # Validate ground-truth slice for max_k (matches compute_recall.py:259-266).
+    gt_slice = gt_arr[:, :max_k]
+    neg_rows = np.where((gt_slice < 0).any(axis=1))[0]
+    if neg_rows.size:
+        raise ValueError(
+            f"negative ground-truth ID in row {int(neg_rows[0])}"
+        )
+    row_unique_counts = np.apply_along_axis(lambda r: np.unique(r).size, 1, gt_slice)
+    dup_rows = np.where(row_unique_counts != max_k)[0]
+    if dup_rows.size:
+        raise ValueError(
+            f"duplicate ground-truth ID in row {int(dup_rows[0])}"
+        )
+
+    results = []
+    for k in sorted(top_ks):
+        # Sort each ground-truth row so we can use searchsorted for O(k log k) lookup.
+        gt_sorted = np.sort(gt_arr[:, :k], axis=1)  # (N, k)
+        qr_k = qr[:, :k]                            # (N, k) view
+
+        matches_arr = np.empty(n, dtype=np.int64)
+        for i in range(n):
+            # De-duplicate and remove sentinel negatives, matching the set-based logic
+            # in compute_recall.py: actual_set = {pid for pid in row[:k] if pid >= 0}
+            qr_valid = np.unique(qr_k[i][qr_k[i] >= 0])
+            pos = np.searchsorted(gt_sorted[i], qr_valid)
+            pos = np.minimum(pos, k - 1)
+            matches_arr[i] = int(np.sum(gt_sorted[i, pos] == qr_valid))
+
+        recall_per_query = matches_arr / k
+        mean_r = float(recall_per_query.mean())
+        sq_mean = float((recall_per_query ** 2).mean())
+        variance = max(0.0, sq_mean - mean_r ** 2)
+
+        results.append({
+            "top_k": k,
+            "query_count": n,
+            "total_matches": int(matches_arr.sum()),
+            "total_possible_matches": n * k,
+            "mean_recall_at_k": mean_r,
+            "min_recall_at_k": float(recall_per_query.min()),
+            "max_recall_at_k": float(recall_per_query.max()),
+            "stddev_recall_at_k": math.sqrt(variance),
+            "perfect_query_count": int((matches_arr == k).sum()),
+            "perfect_query_fraction": float((matches_arr == k).mean()),
+        })
+    return results
 
 
 def safe_name(value: Any) -> str:
@@ -900,19 +1088,46 @@ def merge_successful_result_rows(
         writer = csv.DictWriter(handle, fieldnames=RESULT_FIELDS, extrasaction="ignore")
         writer.writeheader()
         for row in existing_rows + imported:
-            writer.writerow({field: row.get(field, "") for field in RESULT_FIELDS})
+            writer.writerow(normalize_result_row(row))
     os.replace(temporary, destination)
     return len(imported)
 
 
+def normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = {field: row.get(field, "") for field in RESULT_FIELDS}
+    if not normalized.get("physical_top_k"):
+        normalized["physical_top_k"] = normalized.get("top_k", "")
+    return normalized
+
+
+def ensure_result_header(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size == 0:
+        return
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames == RESULT_FIELDS:
+            return
+        if reader.fieldnames is None or "run_key" not in reader.fieldnames:
+            raise ValueError(f"{path}: results CSV is missing the run_key column")
+        rows = [normalize_result_row(row) for row in reader]
+
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=RESULT_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(temporary, path)
+
+
 def append_result(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_result_header(path)
     exists = path.is_file() and path.stat().st_size > 0
     with path.open("a", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=RESULT_FIELDS, extrasaction="ignore")
         if not exists:
             writer.writeheader()
-        writer.writerow({field: row.get(field, "") for field in RESULT_FIELDS})
+        writer.writerow(normalize_result_row(row))
 
 
 def base_environment(
@@ -981,35 +1196,38 @@ def print_plan(
     settings: RunSettings,
     completed: set[str],
 ) -> int:
-    query_pairs = effective_query_pairs(sweep)
-    total = (
+    query_plans = effective_query_plans(sweep)
+    per_graph_physical = len(query_plans)
+    per_graph_logical = sum(len(p.logical_top_ks) for p in query_plans)
+    configs_per_unit = (
         len(datasets)
         * len(sweep["number_of_segments"])
         * len(quantization_variants)
         * len(sweep["hnsw_m"])
         * len(sweep["ef_construct"])
-        * len(query_pairs)
     )
+    total_logical = configs_per_unit * per_graph_logical
     skipped = 0
     if settings.resume:
-        for values in itertools.product(
+        for dataset, segments, quantization, hnsw_m, ef_construct, plan in itertools.product(
             datasets,
             sweep["number_of_segments"],
             quantization_variants,
             sweep["hnsw_m"],
             sweep["ef_construct"],
-            query_pairs,
+            query_plans,
         ):
-            dataset, segments, quantization, hnsw_m, ef_construct, query_pair = values
-            if make_run_key(
-                dataset,
-                segments,
-                quantization,
-                hnsw_m,
-                ef_construct,
-                *query_pair,
-            ) in completed:
-                skipped += 1
+            for logical_top_k in plan.logical_top_ks:
+                if make_run_key(
+                    dataset,
+                    segments,
+                    quantization,
+                    hnsw_m,
+                    ef_construct,
+                    plan.ef_search,
+                    logical_top_k,
+                ) in completed:
+                    skipped += 1
     print(f"datasets: {len(datasets)}")
     for dataset in datasets:
         data_size_bytes = (
@@ -1028,10 +1246,15 @@ def print_plan(
         )
     print(f"quantization variants: {len(quantization_variants)}")
     print(f"top_k values: {', '.join(map(str, sweep['top_k']))}")
+    print(f"parallel top_k workers: {settings.parallel_top_k_workers}")
     print(
-        "effective (ef_search, top_k) pairs: "
-        + ", ".join(f"({ef}, {top_k})" for ef, top_k in query_pairs)
+        f"query plans per (m, ef_construct): {per_graph_physical} physical, "
+        f"{per_graph_logical} logical rows"
     )
+    for plan in query_plans:
+        print(
+            f"  ef_search={plan.ef_search}: run top_k={plan.physical_top_k}"
+        )
     for variant in quantization_variants:
         print(
             f"  {variant.name}: type={variant.quantization_type}, "
@@ -1054,16 +1277,16 @@ def print_plan(
     )
     print(
         "index builds: "
-        f"{len(datasets) * len(sweep['number_of_segments']) * len(quantization_variants) * len(sweep['hnsw_m']) * len(sweep['ef_construct'])}"
+        f"{configs_per_unit}"
     )
-    print(f"Qdrant query executions: {total}")
-    print(f"recall result configurations: {total}")
+    print(f"Qdrant query executions: {configs_per_unit * per_graph_physical}")
+    print(f"recall result configurations: {total_logical}")
     print(f"already completed: {skipped}")
-    print(f"remaining: {total - skipped}")
+    print(f"remaining: {total_logical - skipped}")
     print(f"results: {settings.results_csv}")
     print(f"image: {settings.image}")
     print(f"batch client: {settings.batch_client}")
-    return total - skipped
+    return total_logical - skipped
 
 
 def execute_sweep(
@@ -1089,9 +1312,49 @@ def execute_sweep(
     runtime = detect_container_runtime()
     start_container(runtime, settings)
     executed = 0
-    query_pairs = effective_query_pairs(sweep)
+    query_plans = effective_query_plans(sweep)
     # Keyed by (dataset, segments) — quantization is changed live, not by reinsertion.
     insertion_states: dict[InsertionTarget, CollectionState] = {}
+    # Ground-truth arrays loaded once per dataset and reused across all plans.
+    gt_cache: dict[str, np.ndarray] = {}
+    output_lock = threading.Lock()
+    gt_cache_lock = threading.Lock()
+
+    def is_complete(run_key: str) -> bool:
+        with output_lock:
+            return run_key in completed
+
+    def limit_reached() -> bool:
+        with output_lock:
+            return limit is not None and executed >= limit
+
+    def get_ground_truth(dataset: Dataset) -> np.ndarray:
+        with gt_cache_lock:
+            if dataset.name not in gt_cache:
+                gt_cache[dataset.name] = np.load(
+                    dataset.ground_truth, mmap_mode="r"
+                )
+            return gt_cache[dataset.name]
+
+    def emit_result(row: dict[str, Any], *, mark_completed: bool = False) -> bool:
+        nonlocal executed
+        with output_lock:
+            if limit is not None and executed >= limit:
+                return False
+            append_result(settings.results_csv, row)
+            if mark_completed and row.get("status") == "success":
+                completed.add(str(row["run_key"]))
+            executed += 1
+            current = executed
+        if row.get("status") == "success":
+            suffix = " (saturated)" if row.get("_saturated") else ""
+            print(
+                f"[{current}] {row['run_key']}: "
+                f"recall={row['mean_recall_at_k']}{suffix}"
+            )
+        else:
+            print(f"[{current}] {row['run_key']}: failed: {row.get('error', '')}")
+        return True
 
     try:
         # Graph settings are outermost. For each prioritized collection target,
@@ -1105,21 +1368,18 @@ def execute_sweep(
                 dataset = target.dataset
                 segments = target.segments
                 quantization = target.quantization
-                pending_query_pairs = [
-                    (ef_search, top_k)
-                    for ef_search, top_k in query_pairs
-                    if make_run_key(
-                        dataset,
-                        segments,
-                        quantization,
-                        hnsw_m,
-                        ef_construct,
-                        ef_search,
-                        top_k,
+                pending_plans = [
+                    plan for plan in query_plans
+                    if any(
+                        make_run_key(
+                            dataset, segments, quantization,
+                            hnsw_m, ef_construct, plan.ef_search, lk,
+                        )
+                        not in completed
+                        for lk in plan.logical_top_ks
                     )
-                    not in completed
                 ]
-                if not pending_query_pairs:
+                if not pending_plans:
                     continue
                 if limit is not None and executed >= limit:
                     return
@@ -1222,6 +1482,7 @@ def execute_sweep(
                     )
                     state.base_env.update(quantization.environment())
                     state.current_quantization = quantization
+                    state.current_graph = None
 
                 graph = (hnsw_m, ef_construct)
                 # Index dir includes quantization name so results stay separate.
@@ -1261,103 +1522,278 @@ def execute_sweep(
                     )
                     state.current_graph = graph
 
-                for ef_search, top_k in pending_query_pairs:
-                    if limit is not None and executed >= limit:
-                        return
-                    run_key = make_run_key(
-                        dataset,
-                        segments,
-                        quantization,
-                        hnsw_m,
-                        ef_construct,
-                        ef_search,
-                        top_k,
-                    )
-                    query_dir = (
-                        index_dir / f"ef_search_{ef_search}" / f"top_k_{top_k}"
-                    )
-                    query_dir.mkdir(parents=True, exist_ok=True)
-                    write_registry(query_dir / "ip_registry.txt", settings)
-                    query_env = dict(index_env)
-                    query_env.update(
-                        {
-                            "ACTIVE_TASK": "QUERY",
-                            "HNSW_EF_SEARCH": str(ef_search),
-                            "TOP_K": str(top_k),
+                def run_plan_lane(lane_plans: list[QueryPlan]) -> None:
+                    # Saturation is local to one top_k lane.  Each lane keeps
+                    # ef_search increasing so saturation remains order-preserving.
+                    last_result_hash: dict[int, bytes] = {}
+                    last_recall_by_logical: dict[int, dict[int, dict[str, Any]]] = {}
+                    saturated_physical: set[int] = set()
+
+                    for plan in lane_plans:
+                        if limit_reached():
+                            return
+
+                        query_dir = (
+                            index_dir
+                            / f"ef_search_{plan.ef_search}"
+                            / f"top_k_{plan.physical_top_k}"
+                        )
+                        query_dir.mkdir(parents=True, exist_ok=True)
+                        write_registry(query_dir / "ip_registry.txt", settings)
+                        query_env = dict(index_env)
+                        query_env.update(
+                            {
+                                "ACTIVE_TASK": "QUERY",
+                                "HNSW_EF_SEARCH": str(plan.ef_search),
+                                "TOP_K": str(plan.physical_top_k),
+                            }
+                        )
+                        result_ids_path = query_dir / "query_result_ids.npy"
+                        can_reuse_query_artifacts = reusable_query_artifacts(
+                            query_dir,
+                            plan.physical_top_k,
+                            dataset.query_meta.rows,
+                            query_env,
+                        )
+                        write_run_config(query_dir, query_env)
+
+                        def _base_row(logical_top_k: int) -> dict[str, Any]:
+                            return {
+                                "run_key": make_run_key(
+                                    dataset, segments, quantization,
+                                    hnsw_m, ef_construct,
+                                    plan.ef_search, logical_top_k,
+                                ),
+                                "status": "failed",
+                                "dataset": dataset.name,
+                                "data_file": dataset.data,
+                                "query_file": dataset.queries,
+                                "ground_truth_file": dataset.ground_truth,
+                                "corpus_size": dataset.data_meta.rows,
+                                "query_count": dataset.query_meta.rows,
+                                "vector_dim": dataset.data_meta.columns,
+                                "data_size_bytes": state.data_size_bytes,
+                                "distance_metric": dataset.distance_metric,
+                                "qdrant_image": settings.image,
+                                "number_of_segments": segments,
+                                "segment_size_kb": state.segment_size_kb,
+                                "actual_segments": state.actual_segments,
+                                "quantization_variant": quantization.name,
+                                "quantization": quantization.quantization_type,
+                                "quantization_always_ram": quantization.always_ram,
+                                "quantization_scalar_quantile": quantization.scalar_quantile,
+                                "quantization_binary_encoding": quantization.binary_encoding,
+                                "quantization_product_compression": quantization.product_compression,
+                                "quantization_turbo_bits": quantization.turbo_bits,
+                                "hnsw_m": hnsw_m,
+                                "ef_construct": ef_construct,
+                                "ef_search": plan.ef_search,
+                                "top_k": logical_top_k,
+                                "physical_top_k": plan.physical_top_k,
+                                "top_k_execution_mode": "PARALLEL_TOP_K"
+                                if parallel_top_k_enabled
+                                else "INDIVIDUAL",
+                                "insert_time_s": state.insert_time,
+                                "index_time_s": state.index_time,
+                                "result_dir": query_dir,
+                            }
+
+                        if plan.physical_top_k in saturated_physical:
+                            prev_recalls = last_recall_by_logical.get(
+                                plan.physical_top_k, {}
+                            )
+                            for logical_top_k in plan.logical_top_ks:
+                                run_key = make_run_key(
+                                    dataset, segments, quantization,
+                                    hnsw_m, ef_construct,
+                                    plan.ef_search, logical_top_k,
+                                )
+                                if is_complete(run_key):
+                                    continue
+                                row = _base_row(logical_top_k)
+                                recall_for_k = prev_recalls.get(logical_top_k)
+                                if recall_for_k is None:
+                                    row["error"] = (
+                                        "saturated but no recall metrics cached "
+                                        f"for top_k={logical_top_k}"
+                                    )
+                                else:
+                                    row.update(recall_for_k)
+                                    row["status"] = "success"
+                                    row["query_time_s"] = 0.0
+                                    row["_saturated"] = True
+                                emit_result(
+                                    row,
+                                    mark_completed=row["status"] == "success",
+                                )
+                            continue
+
+                        ran_query = False
+                        if not can_reuse_query_artifacts:
+                            remove_query_artifacts(query_dir)
+                            try:
+                                run_command(
+                                    [str(settings.batch_client)],
+                                    query_dir,
+                                    query_env,
+                                    query_dir / "query.log",
+                                )
+                                ran_query = True
+                            except Exception as exc:
+                                for logical_top_k in plan.logical_top_ks:
+                                    run_key = make_run_key(
+                                        dataset, segments, quantization,
+                                        hnsw_m, ef_construct,
+                                        plan.ef_search, logical_top_k,
+                                    )
+                                    if is_complete(run_key):
+                                        continue
+                                    row = _base_row(logical_top_k)
+                                    row["error"] = str(exc)
+                                    emit_result(row)
+                                continue
+
+                        try:
+                            query_time_s = read_rank_zero_total(
+                                query_dir / "query_times.csv"
+                            )
+                        except Exception as exc:
+                            for logical_top_k in plan.logical_top_ks:
+                                run_key = make_run_key(
+                                    dataset, segments, quantization,
+                                    hnsw_m, ef_construct,
+                                    plan.ef_search, logical_top_k,
+                                )
+                                if is_complete(run_key):
+                                    continue
+                                row = _base_row(logical_top_k)
+                                row["error"] = f"query_times.csv unreadable: {exc}"
+                                emit_result(row)
+                            continue
+
+                        combined_recall_path = query_dir / "recall.csv"
+                        existing_recall: dict[int, dict[str, Any]] = {}
+                        recall_is_current = (
+                            combined_recall_path.is_file()
+                            and combined_recall_path.stat().st_mtime
+                            >= result_ids_path.stat().st_mtime
+                        )
+                        if recall_is_current and not ran_query:
+                            existing_recall = read_recall_csv(combined_recall_path)
+                        needed = [
+                            lk for lk in plan.logical_top_ks
+                            if lk not in existing_recall
+                        ]
+                        if needed:
+                            try:
+                                summaries = compute_recall_inline(
+                                    get_ground_truth(dataset),
+                                    result_ids_path,
+                                    list(plan.logical_top_ks),
+                                )
+                                write_recall_csv_local(combined_recall_path, summaries)
+                                existing_recall = {s["top_k"]: s for s in summaries}
+                            except Exception as exc:
+                                for logical_top_k in plan.logical_top_ks:
+                                    run_key = make_run_key(
+                                        dataset, segments, quantization,
+                                        hnsw_m, ef_construct,
+                                        plan.ef_search, logical_top_k,
+                                    )
+                                    if is_complete(run_key):
+                                        continue
+                                    row = _base_row(logical_top_k)
+                                    row["error"] = str(exc)
+                                    emit_result(row)
+                                continue
+
+                        recall_metric_keys = (
+                            "mean_recall_at_k",
+                            "min_recall_at_k",
+                            "max_recall_at_k",
+                            "stddev_recall_at_k",
+                            "perfect_query_count",
+                            "perfect_query_fraction",
+                        )
+                        this_plan_recalls: dict[int, dict[str, Any]] = {
+                            lk: {
+                                key: value
+                                for key, value in existing_recall[lk].items()
+                                if key in recall_metric_keys
+                            }
+                            for lk in plan.logical_top_ks
+                            if lk in existing_recall
+                            and is_complete(
+                                make_run_key(
+                                    dataset, segments, quantization,
+                                    hnsw_m, ef_construct,
+                                    plan.ef_search, lk,
+                                )
+                            )
                         }
-                    )
-                    write_run_config(query_dir, query_env)
-                    row: dict[str, Any] = {
-                        "run_key": run_key,
-                        "status": "failed",
-                        "dataset": dataset.name,
-                        "data_file": dataset.data,
-                        "query_file": dataset.queries,
-                        "ground_truth_file": dataset.ground_truth,
-                        "corpus_size": dataset.data_meta.rows,
-                        "query_count": dataset.query_meta.rows,
-                        "vector_dim": dataset.data_meta.columns,
-                        "data_size_bytes": state.data_size_bytes,
-                        "distance_metric": dataset.distance_metric,
-                        "qdrant_image": settings.image,
-                        "number_of_segments": segments,
-                        "segment_size_kb": state.segment_size_kb,
-                        "actual_segments": state.actual_segments,
-                        "quantization_variant": quantization.name,
-                        "quantization": quantization.quantization_type,
-                        "quantization_always_ram": quantization.always_ram,
-                        "quantization_scalar_quantile": quantization.scalar_quantile,
-                        "quantization_binary_encoding": quantization.binary_encoding,
-                        "quantization_product_compression": quantization.product_compression,
-                        "quantization_turbo_bits": quantization.turbo_bits,
-                        "hnsw_m": hnsw_m,
-                        "ef_construct": ef_construct,
-                        "ef_search": ef_search,
-                        "top_k": top_k,
-                        "top_k_execution_mode": "INDIVIDUAL",
-                        "insert_time_s": state.insert_time,
-                        "index_time_s": state.index_time,
-                        "result_dir": query_dir,
-                    }
-                    try:
-                        run_command(
-                            [str(settings.batch_client)],
-                            query_dir,
-                            query_env,
-                            query_dir / "query.log",
-                        )
-                        row["query_time_s"] = read_rank_zero_total(
-                            query_dir / "query_times.csv"
-                        )
-                        recall_path = query_dir / "recall.csv"
-                        run_command(
-                            [
-                                sys.executable,
-                                str(COMPUTE_RECALL),
-                                str(dataset.ground_truth),
-                                str(query_dir / "query_result_ids.npy"),
-                                str(top_k),
-                                "--output",
-                                str(recall_path),
-                            ],
-                            query_dir,
-                            query_env,
-                            query_dir / "recall.log",
-                        )
-                        row.update(read_single_csv_row(recall_path))
-                        row["status"] = "success"
-                        completed.add(run_key)
-                    except Exception as exc:
-                        row["error"] = str(exc)
-                    append_result(settings.results_csv, row)
-                    executed += 1
-                    if row["status"] == "success":
-                        print(
-                            f"[{executed}] {run_key}: "
-                            f"recall={row['mean_recall_at_k']}"
-                        )
-                    else:
-                        print(f"[{executed}] {run_key}: failed: {row['error']}")
+                        for logical_top_k in plan.logical_top_ks:
+                            run_key = make_run_key(
+                                dataset, segments, quantization,
+                                hnsw_m, ef_construct,
+                                plan.ef_search, logical_top_k,
+                            )
+                            if is_complete(run_key):
+                                continue
+                            row = _base_row(logical_top_k)
+                            try:
+                                row.update(existing_recall[logical_top_k])
+                                row["query_time_s"] = query_time_s
+                                row["status"] = "success"
+                                this_plan_recalls[logical_top_k] = {
+                                    key: row[key]
+                                    for key in recall_metric_keys
+                                    if key in row
+                                }
+                            except Exception as exc:
+                                row["error"] = str(exc)
+                            emit_result(
+                                row,
+                                mark_completed=row["status"] == "success",
+                            )
+
+                        if result_ids_path.is_file():
+                            current_hash = _file_digest(result_ids_path)
+                            if plan.physical_top_k in last_result_hash:
+                                if last_result_hash[plan.physical_top_k] == current_hash:
+                                    saturated_physical.add(plan.physical_top_k)
+                            last_result_hash[plan.physical_top_k] = current_hash
+                        if this_plan_recalls:
+                            last_recall_by_logical.setdefault(
+                                plan.physical_top_k, {}
+                            ).update(this_plan_recalls)
+
+                lanes: list[list[QueryPlan]] = []
+                for top_k in sorted({plan.physical_top_k for plan in pending_plans}):
+                    lane = [
+                        plan for plan in pending_plans
+                        if plan.physical_top_k == top_k
+                    ]
+                    lanes.append(sorted(lane, key=lambda p: p.ef_search))
+
+                parallel_top_k_enabled = (
+                    settings.parallel_top_k_workers > 1
+                    and len(lanes) > 1
+                    and limit is None
+                )
+                if parallel_top_k_enabled:
+                    max_workers = min(settings.parallel_top_k_workers, len(lanes))
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=max_workers
+                    ) as executor:
+                        futures = [
+                            executor.submit(run_plan_lane, lane)
+                            for lane in lanes
+                        ]
+                        for future in concurrent.futures.as_completed(futures):
+                            future.result()
+                else:
+                    for lane in lanes:
+                        run_plan_lane(lane)
     finally:
         if not settings.keep_container:
             stop_container(runtime, settings)

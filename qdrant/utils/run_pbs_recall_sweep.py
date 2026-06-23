@@ -545,9 +545,11 @@ def prepare_queue(
     print(f"queue: {queue.root}")
     print(f"created units: {created}")
     print(f"existing units: {existing}")
+    plans = local.effective_query_plans(sweep)
     print(
-        "query configurations per unit: "
-        f"{len(local.effective_query_pairs(sweep))}"
+        "query plans per unit: "
+        f"{len(plans)} physical, "
+        f"{sum(len(p.logical_top_ks) for p in plans)} logical rows"
     )
     print(f"worker script: {queue.root / 'worker.pbs.sh'}")
     if results_csv is not None:
@@ -574,7 +576,7 @@ def import_results_csv(config_path: Path, results_csv: Path) -> int:
         print(f"imported rows: 0 from {source}")
         return 0
 
-    query_pairs = local.effective_query_pairs(sweep)
+    query_plans = local.effective_query_plans(sweep)
     imported_rows = 0
     completed_units = 0
     partial_units = 0
@@ -601,9 +603,11 @@ def import_results_csv(config_path: Path, results_csv: Path) -> int:
                                 variant,
                                 hnsw_m,
                                 ef_construct,
-                                *pair,
+                                plan.ef_search,
+                                logical_top_k,
                             )
-                            for pair in query_pairs
+                            for plan in query_plans
+                            for logical_top_k in plan.logical_top_ks
                         }
                         rows = {
                             key: source_rows[key]
@@ -1261,7 +1265,7 @@ def execute_unit(
         variant,
         sweep["top_k"],
     )
-    query_pairs = local.effective_query_pairs(sweep)
+    query_plans = local.effective_query_plans(sweep)
 
     if not insertion_is_ready:
         local.write_registry(build_dir / "ip_registry.txt", run_settings)
@@ -1295,20 +1299,18 @@ def execute_unit(
         )
         insert_time = local.read_rank_zero_total(build_dir / "insert_times.csv")
 
-    pending = [
-        pair
-        for pair in query_pairs
-        if local.make_run_key(
-            dataset,
-            segments,
-            variant,
-            hnsw_m,
-            ef_construct,
-            *pair,
+    pending_plans = [
+        plan for plan in query_plans
+        if any(
+            local.make_run_key(
+                dataset, segments, variant,
+                hnsw_m, ef_construct, plan.ef_search, lk,
+            )
+            not in completed
+            for lk in plan.logical_top_ks
         )
-        not in completed
     ]
-    if not pending:
+    if not pending_plans:
         return insert_time
 
     index_dir = unit_dir / "index"
@@ -1340,85 +1342,167 @@ def execute_unit(
     info = local.query_collection_info(run_settings, collection_name)
     actual_segments = info.get("segments_count", "")
 
-    for ef_search, top_k in pending:
+    for plan in pending_plans:
         deadline.check()
-        query_dir = index_dir / f"ef_search_{ef_search}" / f"top_k_{top_k}"
+        query_dir = (
+            index_dir
+            / f"ef_search_{plan.ef_search}"
+            / f"top_k_{plan.physical_top_k}"
+        )
         local.write_registry(query_dir / "ip_registry.txt", run_settings)
         query_env = dict(index_env)
         query_env.update(
             {
                 "ACTIVE_TASK": "QUERY",
-                "HNSW_EF_SEARCH": str(ef_search),
-                "TOP_K": str(top_k),
+                "HNSW_EF_SEARCH": str(plan.ef_search),
+                "TOP_K": str(plan.physical_top_k),
             }
         )
-        local.write_run_config(query_dir, query_env)
-        row = unit_result_row(
-            dataset,
-            variant,
-            run_settings,
-            segments,
-            segment_size_kb,
-            actual_segments,
-            hnsw_m,
-            ef_construct,
-            ef_search,
-            top_k,
-            insert_time,
-            index_time,
+        result_ids_path = query_dir / "query_result_ids.npy"
+        can_reuse_query_artifacts = local.reusable_query_artifacts(
             query_dir,
+            plan.physical_top_k,
+            dataset.query_meta.rows,
+            query_env,
         )
-        try:
-            run_deadline_command(
-                [str(run_settings.batch_client)],
-                query_dir,
-                query_env,
-                query_dir / "query.log",
-                deadline,
-                job_log,
-                (
-                    f"{identifier} query "
-                    f"ef_search={ef_search} top_k={top_k}"
-                ),
+        local.write_run_config(query_dir, query_env)
+
+        # Run the physical query unless both artifacts exist and the result
+        # file is wide enough for this plan's physical_top_k.
+        ran_query = False
+        if not can_reuse_query_artifacts:
+            local.remove_query_artifacts(query_dir)
+            try:
+                run_deadline_command(
+                    [str(run_settings.batch_client)],
+                    query_dir,
+                    query_env,
+                    query_dir / "query.log",
+                    deadline,
+                    job_log,
+                    (
+                        f"{identifier} query "
+                        f"ef_search={plan.ef_search} "
+                        f"top_k={plan.physical_top_k}"
+                    ),
+                )
+                ran_query = True
+            except WorkUnitDeferred:
+                raise
+            except Exception as exc:
+                for lk in plan.logical_top_ks:
+                    run_key = local.make_run_key(
+                        dataset, segments, variant,
+                        hnsw_m, ef_construct, plan.ef_search, lk,
+                    )
+                    if run_key in completed:
+                        continue
+                    row = unit_result_row(
+                        dataset, variant, run_settings, segments,
+                        segment_size_kb, actual_segments,
+                        hnsw_m, ef_construct, plan.ef_search, lk,
+                        insert_time, index_time, query_dir,
+                    )
+                    row["error"] = str(exc)
+                    local.append_result(results_csv, row)
+                raise
+
+        query_time_s = local.read_rank_zero_total(query_dir / "query_times.csv")
+
+        # Run compute_recall once for all logical top_ks together.
+        combined_recall_path = query_dir / "recall.csv"
+        existing_recall: dict[int, dict[str, str]] = {}
+        recall_is_current = (
+            combined_recall_path.is_file()
+            and combined_recall_path.stat().st_mtime
+            >= result_ids_path.stat().st_mtime
+        )
+        if recall_is_current and not ran_query:
+            existing_recall = local.read_recall_csv(combined_recall_path)
+        needed = [lk for lk in plan.logical_top_ks if lk not in existing_recall]
+        if needed:
+            try:
+                run_deadline_command(
+                    [
+                        sys.executable,
+                        str(local.COMPUTE_RECALL),
+                        str(dataset.ground_truth),
+                        str(result_ids_path),
+                        "--top-k",
+                        *[str(lk) for lk in sorted(plan.logical_top_ks)],
+                        "--output",
+                        str(combined_recall_path),
+                    ],
+                    query_dir,
+                    query_env,
+                    query_dir / "recall.log",
+                    deadline,
+                    job_log,
+                    (
+                        f"{identifier} compute recall "
+                        f"ef_search={plan.ef_search} "
+                        f"top_ks={list(plan.logical_top_ks)}"
+                    ),
+                )
+                existing_recall = local.read_recall_csv(combined_recall_path)
+            except WorkUnitDeferred:
+                raise
+            except Exception as exc:
+                for logical_top_k in plan.logical_top_ks:
+                    run_key = local.make_run_key(
+                        dataset, segments, variant,
+                        hnsw_m, ef_construct, plan.ef_search, logical_top_k,
+                    )
+                    if run_key in completed:
+                        continue
+                    row = unit_result_row(
+                        dataset, variant, run_settings, segments,
+                        segment_size_kb, actual_segments,
+                        hnsw_m, ef_construct, plan.ef_search, logical_top_k,
+                        insert_time, index_time, query_dir,
+                    )
+                    row["physical_top_k"] = plan.physical_top_k
+                    row["error"] = str(exc)
+                    local.append_result(results_csv, row)
+                raise
+
+        for logical_top_k in plan.logical_top_ks:
+            run_key = local.make_run_key(
+                dataset, segments, variant,
+                hnsw_m, ef_construct, plan.ef_search, logical_top_k,
             )
-            row["query_time_s"] = local.read_rank_zero_total(
-                query_dir / "query_times.csv"
+            if run_key in completed:
+                continue
+            row = unit_result_row(
+                dataset, variant, run_settings, segments,
+                segment_size_kb, actual_segments,
+                hnsw_m, ef_construct, plan.ef_search, logical_top_k,
+                insert_time, index_time, query_dir,
             )
-            run_deadline_command(
-                [
-                    sys.executable,
-                    str(local.COMPUTE_RECALL),
-                    str(dataset.ground_truth),
-                    str(query_dir / "query_result_ids.npy"),
-                    str(top_k),
-                    "--output",
-                    str(query_dir / "recall.csv"),
-                ],
-                query_dir,
-                query_env,
-                query_dir / "recall.log",
-                deadline,
-                job_log,
-                (
-                    f"{identifier} compute recall "
-                    f"ef_search={ef_search} top_k={top_k}"
-                ),
-            )
-            row.update(local.read_single_csv_row(query_dir / "recall.csv"))
-            row["status"] = "success"
-            completed.add(row["run_key"])
-        except WorkUnitDeferred:
-            raise
-        except Exception as exc:
-            row["error"] = str(exc)
+            row["physical_top_k"] = plan.physical_top_k
+            try:
+                row.update(existing_recall[logical_top_k])
+                row["query_time_s"] = (
+                    query_time_s
+                    if logical_top_k == plan.physical_top_k
+                    else 0.0
+                )
+                row["status"] = "success"
+                completed.add(run_key)
+            except Exception as exc:
+                row["error"] = str(exc)
+                local.append_result(results_csv, row)
+                print(
+                    f"{identifier}: {run_key} failed: {row['error']}",
+                    flush=True,
+                )
+                raise
             local.append_result(results_csv, row)
-            raise
-        local.append_result(results_csv, row)
-        print(
-            f"{identifier}: {row['run_key']} "
-            f"recall={row['mean_recall_at_k']}",
-            flush=True,
-        )
+            print(
+                f"{identifier}: {run_key} "
+                f"recall={row['mean_recall_at_k']}",
+                flush=True,
+            )
     return insert_time
 
 
@@ -1965,9 +2049,7 @@ def aggregate_results(queue: QueueSettings, output: Path | None) -> int:
         for path in source_paths:
             with path.open(newline="", encoding="utf-8") as source:
                 for row in csv.DictReader(source):
-                    writer.writerow(
-                        {field: row.get(field, "") for field in local.RESULT_FIELDS}
-                    )
+                    writer.writerow(local.normalize_result_row(row))
                     rows += 1
     print(f"wrote {destination} with {rows} rows")
     return 0
