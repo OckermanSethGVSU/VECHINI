@@ -595,9 +595,15 @@ def effective_query_plans(sweep: dict[str, list[Any]]) -> list[QueryPlan]:
 
 
 def graph_setting_order(sweep: dict[str, list[Any]]) -> list[tuple[int, int]]:
-    settings = list(itertools.product(sweep["hnsw_m"], sweep["ef_construct"]))
-    random.shuffle(settings)
-    return settings
+    # Sort M ascending (slowest/most expensive to change), efConstruct ascending
+    # within each M. This minimises expensive HNSW rebuilds: M only increments
+    # after all efConstruct values for the current M are exhausted.
+    # (Previously shuffled; shuffle removed because quant-only rebuilds are ~6x
+    # cheaper than M changes, so deterministic ordering saves significant time.)
+    return sorted(
+        itertools.product(sweep["hnsw_m"], sweep["ef_construct"]),
+        key=lambda t: (t[0], t[1]),
+    )
 
 
 def prioritized_collection_targets(
@@ -1682,7 +1688,11 @@ def execute_sweep(
                 state.base_env.update({"QUANTIZATION_VARIANT": quantization.name})
                 state.base_env.update(quantization.environment())
                 state.current_quantization = quantization
-                state.current_graph = None
+                # Do NOT reset current_graph here. The HNSW graph topology (M,
+                # efConstruct) is not invalidated by a quantization-only change —
+                # only the quantized codes are updated. Preserving current_graph
+                # avoids an unnecessary full HNSW rebuild (~20s) on the next
+                # graph iteration when M/efConstruct didn't actually change.
             else:
                 state.quantization_time = "n/a"
 
