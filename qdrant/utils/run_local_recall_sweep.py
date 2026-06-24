@@ -22,6 +22,7 @@ import threading
 import time
 import tomllib
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
@@ -67,6 +68,7 @@ RESULT_FIELDS = [
     "physical_top_k",
     "top_k_execution_mode",
     "insert_time_s",
+    "quantization_time_s",
     "index_time_s",
     "query_time_s",
     "mean_recall_at_k",
@@ -217,6 +219,7 @@ class CollectionState:
     insert_time: float
     current_quantization: QuantizationVariant | None = None
     current_graph: tuple[int, int] | None = None
+    quantization_time: float | str = "n/a"
     index_time: float = 0.0
     actual_segments: Any = ""
 
@@ -345,12 +348,20 @@ def reusable_query_artifacts(
             if existing_env.get(key) != str(value):
                 return False
     try:
-        metadata = read_npy_metadata(result_ids_path)
+        result_ids = np.load(result_ids_path, mmap_mode="r")
     except Exception:
         return False
-    if expected_rows is not None and metadata.rows != expected_rows:
+    if result_ids.ndim != 2:
         return False
-    return metadata.columns >= physical_top_k
+    if expected_rows is not None and result_ids.shape[0] != expected_rows:
+        return False
+    if result_ids.shape[1] < physical_top_k:
+        return False
+    try:
+        read_rank_zero_total(times_csv)
+    except Exception:
+        return False
+    return True
 
 
 def remove_query_artifacts(query_dir: Path) -> None:
@@ -583,54 +594,27 @@ def effective_query_plans(sweep: dict[str, list[Any]]) -> list[QueryPlan]:
     return sorted(plans, key=lambda plan: (plan.ef_search, plan.physical_top_k))
 
 
+def graph_setting_order(sweep: dict[str, list[Any]]) -> list[tuple[int, int]]:
+    settings = list(itertools.product(sweep["hnsw_m"], sweep["ef_construct"]))
+    random.shuffle(settings)
+    return settings
+
+
 def prioritized_collection_targets(
     datasets: list[Dataset],
     segments_values: list[int],
     quantization_variants: list[QuantizationVariant],
 ) -> list[CollectionTarget]:
-    none_variants = [
-        variant
+    targets = [
+        CollectionTarget(dataset, segments, variant)
+        for segments in segments_values
         for variant in quantization_variants
-        if variant.quantization_type == "NONE"
+        for dataset in datasets
     ]
-    if not none_variants:
-        raise ValueError(
-            "priority scheduling requires an enabled NONE quantization variant"
-        )
-
-    first_segments = segments_values[0]
-    baseline = none_variants[0]
-    ordered: list[CollectionTarget] = []
-    seen: set[CollectionTarget] = set()
-
-    def add(dataset: Dataset, segments: int, variant: QuantizationVariant) -> None:
-        target = CollectionTarget(dataset, segments, variant)
-        if target not in seen:
-            ordered.append(target)
-            seen.add(target)
-
-    # First establish an unquantized baseline for every dataset.
-    for dataset in datasets:
-        add(dataset, first_segments, baseline)
-
-    # Then all variants for each dataset together, so all quantization variants
-    # for one (dataset, segments) are consecutive. This lets the sweep reuse the
-    # inserted collection across variants instead of reinserting on each encounter.
-    for dataset in datasets:
-        for variant in quantization_variants:
-            add(dataset, first_segments, variant)
-
-    # Fill in all remaining segment counts in random order so the sweep samples
-    # the space less predictably.  first_segments is already handled above and
-    # will be skipped by the seen-set, so shuffle all values equally.
-    remaining = list(segments_values)
-    random.shuffle(remaining)
-    for segments in remaining:
-        for dataset in datasets:
-            for variant in quantization_variants:
-                add(dataset, segments, variant)
-
-    return ordered
+    # Use a flat shuffle so neither a segment count nor the unquantized case is
+    # systematically favored when the scheduler switches datasets.
+    random.shuffle(targets)
+    return targets
 
 
 def load_quantization_variants(config: dict[str, Any]) -> list[QuantizationVariant]:
@@ -1057,6 +1041,70 @@ def completed_run_keys(path: Path) -> set[str]:
     return set(successful_result_rows(path))
 
 
+def successful_rows_by_dataset(
+    path: Path,
+    datasets: Iterable[Dataset],
+) -> dict[str, int]:
+    counts = {dataset.name: 0 for dataset in datasets}
+    if not path.is_file():
+        return counts
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            return counts
+        if "dataset" not in reader.fieldnames or "status" not in reader.fieldnames:
+            raise ValueError(
+                f"{path}: results CSV is missing the dataset or status column"
+            )
+        for row in reader:
+            dataset = row.get("dataset", "")
+            if row.get("status") == "success" and dataset in counts:
+                counts[dataset] += 1
+    return counts
+
+
+def successful_coverage_by_dataset(
+    path: Path,
+    datasets: Iterable[Dataset],
+) -> dict[str, dict[str, Counter[str]]]:
+    coverage = {
+        dataset.name: {
+            "number_of_segments": Counter(),
+            "quantization_variant": Counter(),
+            "hnsw_m": Counter(),
+            "ef_construct": Counter(),
+        }
+        for dataset in datasets
+    }
+    if not path.is_file():
+        return coverage
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            return coverage
+        required = {
+            "dataset",
+            "status",
+            "number_of_segments",
+            "quantization_variant",
+            "hnsw_m",
+            "ef_construct",
+        }
+        missing = sorted(required - set(reader.fieldnames))
+        if missing:
+            raise ValueError(
+                f"{path}: results CSV is missing required coverage columns: "
+                f"{', '.join(missing)}"
+            )
+        for row in reader:
+            dataset = row.get("dataset", "")
+            if row.get("status") != "success" or dataset not in coverage:
+                continue
+            for field in coverage[dataset]:
+                coverage[dataset][field][str(row.get(field, ""))] += 1
+    return coverage
+
+
 def merge_successful_result_rows(
     destination: Path,
     rows: dict[str, dict[str, str]],
@@ -1097,6 +1145,8 @@ def normalize_result_row(row: dict[str, Any]) -> dict[str, Any]:
     normalized = {field: row.get(field, "") for field in RESULT_FIELDS}
     if not normalized.get("physical_top_k"):
         normalized["physical_top_k"] = normalized.get("top_k", "")
+    if not normalized.get("quantization_time_s"):
+        normalized["quantization_time_s"] = "n/a"
     return normalized
 
 
@@ -1197,6 +1247,11 @@ def print_plan(
     completed: set[str],
 ) -> int:
     query_plans = effective_query_plans(sweep)
+    dataset_success_counts = (
+        successful_rows_by_dataset(settings.results_csv, datasets)
+        if settings.resume
+        else {dataset.name: 0 for dataset in datasets}
+    )
     per_graph_physical = len(query_plans)
     per_graph_logical = sum(len(p.logical_top_ks) for p in query_plans)
     configs_per_unit = (
@@ -1242,7 +1297,9 @@ def print_plan(
         print(
             f"  {dataset.name}: rows={dataset.data_meta.rows}, "
             f"queries={dataset.query_meta.rows}, dim={dataset.data_meta.columns}, "
-            f"metric={dataset.distance_metric}, segment_sizes={segment_sizes}"
+            f"metric={dataset.distance_metric}, "
+            f"successful_results={dataset_success_counts[dataset.name]}, "
+            f"segment_sizes={segment_sizes}"
         )
     print(f"quantization variants: {len(quantization_variants)}")
     print(f"top_k values: {', '.join(map(str, sweep['top_k']))}")
@@ -1268,12 +1325,20 @@ def print_plan(
     quant_updates = insertions * (len(quantization_variants) - 1)
     print(f"insertions (dataset × segments): {insertions}")
     print(
-        f"quantization updates per hnsw pass: {quant_updates} "
-        f"(quantization changed live; no reinsertion)"
+        f"quantization updates: {quant_updates} "
+        f"(one target-order pass; graph settings run inside each quantization)"
     )
     print(
-        "priority order: NONE baseline first per dataset; then all quantization "
-        "variants grouped per dataset so each dataset stays consecutive"
+        "priority order: dataset/segment/quantization targets are flat-shuffled; "
+        "targets prefer the least-complete datasets and undercovered "
+        "segment/quantization values within each dataset; once counts are "
+        "within twenty target batches, execution stays on the current "
+        "dataset/segment when possible"
+    )
+    print(
+        "graph setting order: randomized per run across (hnsw_m, ef_construct) "
+        "pairs, then biased toward undercovered values within each dataset; "
+        "each graph-setting unit is still preserved"
     )
     print(
         "index builds: "
@@ -1304,15 +1369,36 @@ def execute_sweep(
 
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     completed = completed_run_keys(settings.results_csv) if settings.resume else set()
+    dataset_success_counts = (
+        successful_rows_by_dataset(settings.results_csv, datasets)
+        if settings.resume
+        else {dataset.name: 0 for dataset in datasets}
+    )
+    dataset_coverage = (
+        successful_coverage_by_dataset(settings.results_csv, datasets)
+        if settings.resume
+        else {
+            dataset.name: {
+                "number_of_segments": Counter(),
+                "quantization_variant": Counter(),
+                "hnsw_m": Counter(),
+                "ef_construct": Counter(),
+            }
+            for dataset in datasets
+        }
+    )
     targets = prioritized_collection_targets(
         datasets,
         sweep["number_of_segments"],
         quantization_variants,
     )
+    target_order = {target: index for index, target in enumerate(targets)}
     runtime = detect_container_runtime()
     start_container(runtime, settings)
     executed = 0
     query_plans = effective_query_plans(sweep)
+    per_target_rows = sum(len(plan.logical_top_ks) for plan in query_plans)
+    dataset_balance_window = per_target_rows * 20
     # Keyed by (dataset, segments) — quantization is changed live, not by reinsertion.
     insertion_states: dict[InsertionTarget, CollectionState] = {}
     # Ground-truth arrays loaded once per dataset and reused across all plans.
@@ -1344,6 +1430,13 @@ def execute_sweep(
             append_result(settings.results_csv, row)
             if mark_completed and row.get("status") == "success":
                 completed.add(str(row["run_key"]))
+                dataset_name = str(row.get("dataset", ""))
+                if dataset_name in dataset_success_counts:
+                    dataset_success_counts[dataset_name] += 1
+                if dataset_name in dataset_coverage:
+                    coverage = dataset_coverage[dataset_name]
+                    for field in coverage:
+                        coverage[field][str(row.get(field, ""))] += 1
             executed += 1
             current = executed
         if row.get("status") == "success":
@@ -1357,17 +1450,249 @@ def execute_sweep(
         return True
 
     try:
-        # Graph settings are outermost. For each prioritized collection target,
-        # build the graph once and immediately run its full query sweep before
-        # moving to the next dataset/quantization target.
-        for hnsw_m, ef_construct in itertools.product(
-            sweep["hnsw_m"],
-            sweep["ef_construct"],
-        ):
-            for target in targets:
-                dataset = target.dataset
-                segments = target.segments
-                quantization = target.quantization
+        # Collection targets are outermost for locality.  Once a
+        # dataset/segment/quantization target is selected, run randomized graph
+        # settings inside that target before reconsidering dataset balance.
+        graph_settings = graph_setting_order(sweep)
+        graph_order = {
+            graph: index for index, graph in enumerate(graph_settings)
+        }
+        pending_targets = list(targets)
+        previous_target: CollectionTarget | None = None
+
+        def target_pending_rows(target: CollectionTarget) -> int:
+            return sum(
+                1
+                for hnsw_m, ef_construct in graph_settings
+                for plan in query_plans
+                for lk in plan.logical_top_ks
+                if make_run_key(
+                    target.dataset,
+                    target.segments,
+                    target.quantization,
+                    hnsw_m,
+                    ef_construct,
+                    plan.ef_search,
+                    lk,
+                )
+                not in completed
+            )
+
+        def target_coverage_score(target: CollectionTarget) -> tuple[int, int, int]:
+            coverage = dataset_coverage[target.dataset.name]
+            segment_count = coverage["number_of_segments"][str(target.segments)]
+            quantization_count = coverage["quantization_variant"][
+                target.quantization.name
+            ]
+            return (
+                segment_count + quantization_count,
+                segment_count,
+                quantization_count,
+            )
+
+        def target_selection_key(target: CollectionTarget) -> tuple[int, int, int, int]:
+            return (*target_coverage_score(target), target_order[target])
+
+        def graph_selection_key(
+            dataset: Dataset,
+            hnsw_m: int,
+            ef_construct: int,
+        ) -> tuple[int, int, int, int]:
+            coverage = dataset_coverage[dataset.name]
+            m_count = coverage["hnsw_m"][str(hnsw_m)]
+            ef_construct_count = coverage["ef_construct"][str(ef_construct)]
+            return (
+                m_count + ef_construct_count,
+                m_count,
+                ef_construct_count,
+                graph_order[(hnsw_m, ef_construct)],
+            )
+
+        def choose_next_target() -> CollectionTarget | None:
+            pending_row_counts = {
+                target: pending_rows
+                for target in pending_targets
+                if (pending_rows := target_pending_rows(target)) > 0
+            }
+            candidates = [
+                target
+                for target in pending_targets
+                if target in pending_row_counts
+            ]
+            if not candidates:
+                return None
+            min_count = min(
+                dataset_success_counts.get(target.dataset.name, 0)
+                for target in candidates
+            )
+            eligible = [
+                target
+                for target in candidates
+                if dataset_success_counts.get(target.dataset.name, 0)
+                <= min_count + dataset_balance_window
+            ]
+            projected_eligible = [
+                target
+                for target in eligible
+                if dataset_success_counts.get(target.dataset.name, 0)
+                + pending_row_counts[target]
+                <= min_count + dataset_balance_window
+                or dataset_success_counts.get(target.dataset.name, 0) == min_count
+            ]
+            if projected_eligible:
+                eligible = projected_eligible
+            if previous_target is None:
+                lowest_count_targets = [
+                    target
+                    for target in eligible
+                    if dataset_success_counts.get(target.dataset.name, 0)
+                    == min_count
+                ]
+                return min(
+                    lowest_count_targets,
+                    key=target_selection_key,
+                )
+            same_insertion = [
+                target
+                for target in eligible
+                if target.dataset == previous_target.dataset
+                and target.segments == previous_target.segments
+            ]
+            if same_insertion:
+                return min(same_insertion, key=target_selection_key)
+            same_dataset = [
+                target
+                for target in eligible
+                if target.dataset == previous_target.dataset
+            ]
+            if same_dataset:
+                return min(same_dataset, key=target_selection_key)
+            return min(eligible, key=target_selection_key)
+
+        while pending_targets:
+            target = choose_next_target()
+            if target is None:
+                break
+            pending_targets.remove(target)
+            previous_target = target
+            dataset = target.dataset
+            segments = target.segments
+            quantization = target.quantization
+            initial_hnsw_m, initial_ef_construct = graph_settings[0]
+            if limit is not None and executed >= limit:
+                return
+
+            insertion_key = InsertionTarget(dataset, segments)
+            state = insertion_states.get(insertion_key)
+            if state is None:
+                data_size_bytes = (
+                    dataset.data_meta.rows
+                    * dataset.data_meta.columns
+                    * dataset.data_meta.item_size
+                )
+                segment_size_kb = math.ceil(data_size_bytes / segments / 1024)
+                # Collection name and dir are keyed by dataset+segments only;
+                # quantization lives in the index subdirectory.
+                collection_name = safe_name(
+                    f"sweep_{dataset.name}_{segments}"
+                )[:200]
+                collection_dir = (
+                    settings.output_dir
+                    / "runs"
+                    / safe_name(dataset.name)
+                    / f"segments_{segments}"
+                )
+                build_dir = collection_dir / "build"
+                build_dir.mkdir(parents=True, exist_ok=True)
+                write_registry(build_dir / "ip_registry.txt", settings)
+                base_env = base_environment(
+                    settings,
+                    dataset,
+                    collection_name,
+                    segments,
+                    segment_size_kb,
+                    quantization,
+                    sweep["top_k"],
+                )
+                collection_env = dict(base_env)
+                collection_env.update(
+                    {
+                        "ACTIVE_TASK": "INSERT",
+                        "HNSW_M": str(initial_hnsw_m),
+                        "HNSW_EF_CONSTRUCTION": str(initial_ef_construct),
+                    }
+                )
+                write_run_config(build_dir, collection_env)
+                run_command(
+                    [sys.executable, str(CONFIGURE_COLLECTION)],
+                    build_dir,
+                    collection_env,
+                    collection_dir / "configure.log",
+                )
+                ready_flag = build_dir / "ready.flag"
+                if ready_flag.exists():
+                    ready_flag.unlink()
+                run_command(
+                    [str(settings.batch_client)],
+                    build_dir,
+                    collection_env,
+                    collection_dir / "insert.log",
+                )
+                state = CollectionState(
+                    collection_name=collection_name,
+                    collection_dir=collection_dir,
+                    build_dir=build_dir,
+                    base_env=base_env,
+                    data_size_bytes=data_size_bytes,
+                    segment_size_kb=segment_size_kb,
+                    insert_time=read_rank_zero_total(
+                        build_dir / "insert_times.csv"
+                    ),
+                    current_quantization=quantization,
+                )
+                insertion_states[insertion_key] = state
+
+            # Quantization can be changed live without reinsertion.
+            # When the target quantization differs from what the collection
+            # currently has, update it in place and wait for GREEN.
+            if state.current_quantization != quantization:
+                quant_dir = (
+                    state.collection_dir
+                    / "quant_updates"
+                    / safe_name(quantization.name)
+                )
+                quant_dir.mkdir(parents=True, exist_ok=True)
+                write_registry(quant_dir / "ip_registry.txt", settings)
+                quant_env = dict(state.base_env)
+                quant_env.update({"QUANTIZATION_VARIANT": quantization.name})
+                quant_env.update(quantization.environment())
+                write_run_config(quant_dir, quant_env)
+                run_command(
+                    [sys.executable, str(UPDATE_QUANTIZATION)],
+                    quant_dir,
+                    quant_env,
+                    quant_dir / "update_quantization.log",
+                )
+                quantization_time_path = quant_dir / "quantization_time.txt"
+                state.quantization_time = (
+                    float(quantization_time_path.read_text(encoding="utf-8"))
+                    if quantization_time_path.is_file()
+                    else "n/a"
+                )
+                state.base_env.update({"QUANTIZATION_VARIANT": quantization.name})
+                state.base_env.update(quantization.environment())
+                state.current_quantization = quantization
+                state.current_graph = None
+            else:
+                state.quantization_time = "n/a"
+
+            target_graph_settings = sorted(
+                graph_settings,
+                key=lambda graph: graph_selection_key(
+                    dataset, graph[0], graph[1]
+                ),
+            )
+            for hnsw_m, ef_construct in target_graph_settings:
                 pending_plans = [
                     plan for plan in query_plans
                     if any(
@@ -1383,106 +1708,6 @@ def execute_sweep(
                     continue
                 if limit is not None and executed >= limit:
                     return
-
-                insertion_key = InsertionTarget(dataset, segments)
-                state = insertion_states.get(insertion_key)
-                if state is None:
-                    data_size_bytes = (
-                        dataset.data_meta.rows
-                        * dataset.data_meta.columns
-                        * dataset.data_meta.item_size
-                    )
-                    segment_size_kb = math.ceil(
-                        data_size_bytes / segments / 1024
-                    )
-                    # Collection name and dir are keyed by dataset+segments only;
-                    # quantization lives in the index subdirectory.
-                    collection_name = safe_name(
-                        f"sweep_{dataset.name}_{segments}"
-                    )[:200]
-                    collection_dir = (
-                        settings.output_dir
-                        / "runs"
-                        / safe_name(dataset.name)
-                        / f"segments_{segments}"
-                    )
-                    build_dir = collection_dir / "build"
-                    build_dir.mkdir(parents=True, exist_ok=True)
-                    write_registry(build_dir / "ip_registry.txt", settings)
-                    base_env = base_environment(
-                        settings,
-                        dataset,
-                        collection_name,
-                        segments,
-                        segment_size_kb,
-                        quantization,
-                        sweep["top_k"],
-                    )
-                    collection_env = dict(base_env)
-                    collection_env.update(
-                        {
-                            "ACTIVE_TASK": "INSERT",
-                            "HNSW_M": str(hnsw_m),
-                            "HNSW_EF_CONSTRUCTION": str(ef_construct),
-                        }
-                    )
-                    write_run_config(build_dir, collection_env)
-                    run_command(
-                        [sys.executable, str(CONFIGURE_COLLECTION)],
-                        build_dir,
-                        collection_env,
-                        collection_dir / "configure.log",
-                    )
-                    ready_flag = build_dir / "ready.flag"
-                    if ready_flag.exists():
-                        ready_flag.unlink()
-                    run_command(
-                        [str(settings.batch_client)],
-                        build_dir,
-                        collection_env,
-                        collection_dir / "insert.log",
-                    )
-                    state = CollectionState(
-                        collection_name=collection_name,
-                        collection_dir=collection_dir,
-                        build_dir=build_dir,
-                        base_env=base_env,
-                        data_size_bytes=data_size_bytes,
-                        segment_size_kb=segment_size_kb,
-                        insert_time=read_rank_zero_total(
-                            build_dir / "insert_times.csv"
-                        ),
-                        current_quantization=quantization,
-                    )
-                    insertion_states[insertion_key] = state
-
-                # Quantization can be changed live without reinsertion.
-                # When the target quantization differs from what the collection
-                # currently has, update it in place and wait for GREEN.
-                if state.current_quantization != quantization:
-                    quant_dir = (
-                        state.collection_dir
-                        / "quant_updates"
-                        / safe_name(quantization.name)
-                    )
-                    quant_dir.mkdir(parents=True, exist_ok=True)
-                    write_registry(quant_dir / "ip_registry.txt", settings)
-                    quant_env = dict(state.base_env)
-                    quant_env.update({"QUANTIZATION_VARIANT": quantization.name})
-                    quant_env.update(quantization.environment())
-                    write_run_config(quant_dir, quant_env)
-                    run_command(
-                        [sys.executable, str(UPDATE_QUANTIZATION)],
-                        quant_dir,
-                        quant_env,
-                        quant_dir / "update_quantization.log",
-                    )
-                    state.base_env.update(
-                        {"QUANTIZATION_VARIANT": quantization.name}
-                    )
-                    state.base_env.update(quantization.environment())
-                    state.current_quantization = quantization
-                    state.current_graph = None
 
                 graph = (hnsw_m, ef_construct)
                 # Index dir includes quantization name so results stay separate.
@@ -1525,7 +1750,9 @@ def execute_sweep(
                 def run_plan_lane(lane_plans: list[QueryPlan]) -> None:
                     # Saturation is local to one top_k lane.  Each lane keeps
                     # ef_search increasing so saturation remains order-preserving.
-                    last_result_hash: dict[int, bytes] = {}
+                    # Require three comparable identical outputs before
+                    # saturating later efSearch values.
+                    saturation_streaks: dict[int, tuple[int, bytes, int]] = {}
                     last_recall_by_logical: dict[int, dict[int, dict[str, Any]]] = {}
                     saturated_physical: set[int] = set()
 
@@ -1594,6 +1821,7 @@ def execute_sweep(
                                 if parallel_top_k_enabled
                                 else "INDIVIDUAL",
                                 "insert_time_s": state.insert_time,
+                                "quantization_time_s": state.quantization_time,
                                 "index_time_s": state.index_time,
                                 "result_dir": query_dir,
                             }
@@ -1679,7 +1907,10 @@ def execute_sweep(
                             >= result_ids_path.stat().st_mtime
                         )
                         if recall_is_current and not ran_query:
-                            existing_recall = read_recall_csv(combined_recall_path)
+                            try:
+                                existing_recall = read_recall_csv(combined_recall_path)
+                            except Exception:
+                                existing_recall = {}
                         needed = [
                             lk for lk in plan.logical_top_ks
                             if lk not in existing_recall
@@ -1742,7 +1973,11 @@ def execute_sweep(
                             row = _base_row(logical_top_k)
                             try:
                                 row.update(existing_recall[logical_top_k])
-                                row["query_time_s"] = query_time_s
+                                row["query_time_s"] = (
+                                    query_time_s
+                                    if logical_top_k == plan.physical_top_k
+                                    else 0.0
+                                )
                                 row["status"] = "success"
                                 this_plan_recalls[logical_top_k] = {
                                     key: row[key]
@@ -1758,10 +1993,33 @@ def execute_sweep(
 
                         if result_ids_path.is_file():
                             current_hash = _file_digest(result_ids_path)
-                            if plan.physical_top_k in last_result_hash:
-                                if last_result_hash[plan.physical_top_k] == current_hash:
-                                    saturated_physical.add(plan.physical_top_k)
-                            last_result_hash[plan.physical_top_k] = current_hash
+                            streak = saturation_streaks.get(plan.physical_top_k)
+                            if streak is None:
+                                saturation_streaks[plan.physical_top_k] = (
+                                    plan.ef_search,
+                                    current_hash,
+                                    1,
+                                )
+                            else:
+                                previous_ef_search, previous_hash, streak_count = streak
+                                # Do not declare saturation from nearby effective
+                                # efSearch values such as 10->16, 50->64, or
+                                # 100->128.  Require at least a 2x step and
+                                # three identical outputs before saturation.
+                                comparable_step = (
+                                    plan.ef_search >= 2 * previous_ef_search
+                                )
+                                if comparable_step and previous_hash == current_hash:
+                                    streak_count += 1
+                                    if streak_count >= 3:
+                                        saturated_physical.add(plan.physical_top_k)
+                                else:
+                                    streak_count = 1
+                                saturation_streaks[plan.physical_top_k] = (
+                                    plan.ef_search,
+                                    current_hash,
+                                    streak_count,
+                                )
                         if this_plan_recalls:
                             last_recall_by_logical.setdefault(
                                 plan.physical_top_k, {}

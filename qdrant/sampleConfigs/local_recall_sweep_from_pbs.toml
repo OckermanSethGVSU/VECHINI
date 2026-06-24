@@ -10,6 +10,8 @@ query_clients = 1
 streaming = true
 resume = true
 keep_container = false
+health_timeout_seconds = 900
+parallel_top_k_workers = 3
 
 [sweep]
 top_k = [10, 50, 100]
@@ -136,3 +138,45 @@ directory = "../../testData/YFCC100MImages"
 data = "yfcc100m_vecs_sampled_1m_crop_nb_1000000.npy"
 queries = "yfcc100m_query_vecs.npy"
 ground_truth = "yfcc100m_query_gt100_sampled_1m.ids.npy"
+
+[[datasets]]
+name = "gist_1m"
+directory = "../../testData/GIST"
+data = "gist_base.npy"
+queries = "gist_query.npy"
+ground_truth = "gist_groundtruth.npy"
+
+[[datasets]]
+name = "pes2ove_100k"
+directory = "../../testData/Pes2oVE"
+data = "embeddings100k.npy"
+queries = "queries.npy"
+ground_truth = "pes2ove_gt100_cosine.ids.npy"
+
+[[datasets]]
+name = "dbpedia_openai3_large_3072_100k"
+directory = "../../testData/dbpedia_openai3_large_3072_100k"
+data = "dbpedia_openai3_large_3072_base_100000.npy"
+queries = "dbpedia_openai3_large_3072_query_10000.npy"
+ground_truth = "dbpedia_openai3_large_3072_gt100_cosine.ids.npy"
+
+[[datasets]]
+name = "trec_covid_qwen_171k"
+directory = "../../testData/covid"
+data = "trec_covid_base_171331x1024.npy"
+queries = "trec_covid_query_5000x1024.npy"
+ground_truth = "trec_covid_5000q_gt100_cosine.ids.npy"
+
+[[datasets]]
+name = "fiqa_bge_m3_57k"
+directory = "../../testData/fiba"
+data = "fiqa_base_57600x1024.npy"
+queries = "fiqa_query_6648x1024.npy"
+ground_truth = "fiqa_gt100_cosine.ids.npy"
+
+[[datasets]]
+name = "lastfm_64_dot"
+directory = "../../testData/lastFM"
+data = "lastfm_base_292385x65.npy"
+queries = "lastfm_query_50000x65.npy"
+ground_truth = "lastfm_gt100_cosine.ids.npy"

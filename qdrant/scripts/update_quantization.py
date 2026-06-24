@@ -109,6 +109,7 @@ def main() -> None:
     collection_name = os.environ["COLLECTION_NAME"].strip()
     quantization_type = os.getenv("QUANTIZATION_TYPE", "NONE").strip().upper()
 
+    t1 = time.time()
     if quantization_type in ("NONE", ""):
         # Use raw REST PATCH so quantization_config is explicitly set to null.
         url = f"http://{base_ip}:{rest_port}/collections/{collection_name}"
@@ -137,6 +138,8 @@ def main() -> None:
         )
 
     wait_for_ready(base_ip, rest_port, collection_name)
+    with open("quantization_time.txt", "w", encoding="utf-8") as handle:
+        handle.write(str(time.time() - t1))
     print(
         f"Updated quantization to {quantization_type} for {collection_name!r}",
         flush=True,

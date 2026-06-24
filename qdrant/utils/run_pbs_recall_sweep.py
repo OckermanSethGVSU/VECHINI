@@ -1210,6 +1210,7 @@ def unit_result_row(
         "top_k": top_k,
         "top_k_execution_mode": "INDIVIDUAL",
         "insert_time_s": insert_time,
+        "quantization_time_s": "n/a",
         "index_time_s": index_time,
         "result_dir": query_dir,
     }
