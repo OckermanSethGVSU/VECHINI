@@ -106,7 +106,7 @@ While vector search has been extensively studied in industry applications, less 
 ```bibtex
 @misc{ockerman2026coreshurtsvectordatabase,
   title         = {When More Cores Hurts: The Vector Database Scaling Paradox in HPC},
-  author        = {Seth Ockerman and Song Young Oh and Amal Gueroudji and Rochana Chaturvedi and Philip Carns and Nicholas Chia and Matthieu Dorier and Robert Latham and Tanwi Mallick and Swan Perarnau and Robert Underwood and Kyle Chard and Ian Foster and Robert Ross and Shivaram Venkataraman},
+  author        = {Seth Ockerman and Song Young Oh and Amal Gueroudji and Rochana Chaturvedi and Philip Carns and Nicholas Chia and Matthieu Dorier and Robert Latham and Tanwi Mallick and Swann Perarnau and Robert Underwood and Kyle Chard and Ian Foster and Robert Ross and Shivaram Venkataraman},
   year          = {2026},
   eprint        = {2606.08950},
   archivePrefix = {arXiv},
