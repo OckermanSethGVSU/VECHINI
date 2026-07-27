@@ -88,7 +88,7 @@ While vector search has been extensively studied in industry applications, less 
 
 | Dataset | Source data | Original use case | Number of embeddings | Dimensionality | Intended distance metric | Embedding model |
 |---|---|---|---:|---:|---|---|
-| [Pes2o-VE](https://www.materialsdatafacility.org/detail/e31e3225-7f75-4313-9983-f8b75811405f-1.0) | [PeS2o text corpus](https://github.com/allenai/pes2o) | Scientific document retrieval | ~88 million | 2560 | Cosine | Qwen3-Embedding-4B |
+| [Pes2o-VE](https://acdc.alcf.anl.gov/mdf/detail/e31e3225-7f75-4313-9983-f8b75811405f-1.0/) | [PeS2o text corpus](https://github.com/allenai/pes2o) | Scientific document retrieval | ~88 million | 2560 | Cosine | Qwen3-Embedding-4B |
 
 
 
