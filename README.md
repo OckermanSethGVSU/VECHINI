@@ -1,6 +1,6 @@
 # VECHINI
 
-VECHINI (**V**ector Database **E**valuation and **C**haracterization for **H**PC **I**nsertion, Indexing, and **N**earest-neighbor Search) is a work-in-progress tool for running vector database (VDB) experiments on PBS HPC platforms that support Apptainer and MPI. Using `pbs_submit_manager.sh` and configuration files, users can launch customized single- and multi-node experiments to evaluate key aspects of VDB performance. The goal is to help users answer questions about performance on their target HPC platform. We focus on a few of the key stages of the VDB lifecycle, including data ingestion, index construction, and query serving. Currently, we support [Qdrant](https://qdrant.tech/), [Milvus](https://milvus.io/), and [Weaviate](https://weaviate.io/).
+VECHINI (**V**ector Database **E**valuation and **C**haracterization for **H**PC **I**nsertion, Indexing, and **N**earest-neighbor Search) is the open-source research artifact accompanying our [report on vector database performance on HPC systems](https://arxiv.org/abs/2606.08950). This work-in-progress tool is designed to automate vector database (VDB) experiments on PBS HPC platforms that support Apptainer and MPI. Using `pbs_submit_manager.sh` and configuration files, users can launch customized single- and multi-node experiments to evaluate key aspects of VDB performance. The goal is to help users answer questions about performance on their target HPC platform. We focus on a few of the key stages of the VDB lifecycle, including data ingestion, index construction, and query serving. Currently, we support [Qdrant](https://qdrant.tech/), [Milvus](https://milvus.io/), and [Weaviate](https://weaviate.io/). 
 
 
 <br> <br>
@@ -102,3 +102,15 @@ While vector search has been extensively studied in industry applications, less 
 - [Weaviate engine docs](docs/engines/weaviate.md)
 
 
+## Citation
+```bibtex
+@misc{ockerman2026coreshurtsvectordatabase,
+  title         = {When More Cores Hurts: The Vector Database Scaling Paradox in HPC},
+  author        = {Seth Ockerman and Song Young Oh and Amal Gueroudji and Rochana Chaturvedi and Philip Carns and Nicholas Chia and Matthieu Dorier and Robert Latham and Tanwi Mallick and Swan Perarnau and Robert Underwood and Kyle Chard and Ian Foster and Robert Ross and Shivaram Venkataraman},
+  year          = {2026},
+  eprint        = {2606.08950},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.DC},
+  url           = {https://arxiv.org/abs/2606.08950}
+}
+```
