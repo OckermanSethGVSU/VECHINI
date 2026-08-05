@@ -5,8 +5,8 @@ use ndarray::{s, Array1, Array2, ArrayView2, Axis};
 use ndarray_npy::{read_npy, write_npy};
 use qdrant_client::qdrant::{
     point_id::PointIdOptions, CountPointsBuilder, GetPointsBuilder, PointId, PointStruct, Query,
-    QueryBatchPointsBuilder, QueryPoints, QueryPointsBuilder, ScoredPoint, SearchParamsBuilder,
-    UpsertPointsBuilder,
+    QuantizationSearchParamsBuilder, QueryBatchPointsBuilder, QueryPoints, QueryPointsBuilder,
+    ScoredPoint, SearchParamsBuilder, UpsertPointsBuilder,
 };
 use qdrant_client::{Payload, Qdrant};
 use std::env;
@@ -60,6 +60,10 @@ struct RunConfig {
     debug_results: bool,
     ef_search: u64,
     top_k: usize,
+    // None means "do not set QuantizationSearchParams at all" -- i.e. the historical
+    // behavior of this client (server picks its own per-quantization-type default).
+    // Some(true)/Some(false) explicitly force SearchParams.quantization.rescore.
+    quantization_rescore: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -211,6 +215,25 @@ fn parse_optional_bool(names: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+// Tri-state bool: unset env var means "leave the field unset" (distinct from false),
+// so callers can tell "not provided" apart from an explicit true/false. Used for
+// QUANTIZATION_RESCORE, where "unset" must mean "don't send rescore at all" so the
+// server falls back to its own per-quantization-type default.
+fn parse_optional_bool_tristate(names: &[&str]) -> anyhow::Result<Option<bool>> {
+    match first_env(names) {
+        Some(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" => Ok(Some(true)),
+            "0" | "false" | "no" => Ok(Some(false)),
+            other => bail!(
+                "expected a boolean (true/false) for {:?}, got {:?}",
+                names,
+                other
+            ),
+        },
+        None => Ok(None),
+    }
+}
+
 // Optional integer parsing for knobs like ef_search.
 fn parse_optional_u64(names: &[&str]) -> anyhow::Result<Option<u64>> {
     match first_env(names) {
@@ -243,6 +266,24 @@ fn parse_active_task(raw: &str) -> anyhow::Result<ActiveTask> {
         "INSERT" => Ok(ActiveTask::Upload),
         "QUERY" => Ok(ActiveTask::Query),
         other => bail!("unsupported ACTIVE_TASK/TASK value: {other} (expected INSERT or QUERY)"),
+    }
+}
+
+// Build SearchParams for a query. `quantization_rescore` is intentionally tri-state:
+// None means the QuantizationSearchParams block is omitted entirely from the request
+// (the historical behavior of this client), so the server falls back to its own
+// per-quantization-type default. Some(true)/Some(false) explicitly force rescoring
+// on/off regardless of the collection's quantization method.
+fn build_search_params(
+    ef_search: u64,
+    quantization_rescore: Option<bool>,
+) -> qdrant_client::qdrant::SearchParams {
+    let builder = SearchParamsBuilder::default().hnsw_ef(ef_search);
+    match quantization_rescore {
+        Some(rescore) => builder
+            .quantization(QuantizationSearchParamsBuilder::default().rescore(rescore))
+            .build(),
+        None => builder.build(),
     }
 }
 
@@ -330,6 +371,11 @@ fn load_config() -> anyhow::Result<RunConfig> {
     } else {
         10
     };
+    let quantization_rescore = if matches!(active_task, ActiveTask::Query) {
+        parse_optional_bool_tristate(&["QUANTIZATION_RESCORE"])?
+    } else {
+        None
+    };
 
     Ok(RunConfig {
         active_task,
@@ -346,6 +392,7 @@ fn load_config() -> anyhow::Result<RunConfig> {
         debug_results,
         ef_search,
         top_k,
+        quantization_rescore,
     })
 }
 
@@ -745,6 +792,7 @@ async fn worker(
                         config.top_k,
                         config.debug_results,
                         config.ef_search,
+                        config.quantization_rescore,
                         barrier,
                         lock,
                         config.active_task,
@@ -788,6 +836,7 @@ async fn worker(
                         config.top_k,
                         config.debug_results,
                         config.ef_search,
+                        config.quantization_rescore,
                         barrier,
                         lock,
                         config.active_task,
@@ -1047,6 +1096,7 @@ async fn run_query(
     top_k: usize,
     debug_results: bool,
     ef_search: u64,
+    quantization_rescore: Option<bool>,
     barrier: Arc<Barrier>,
     lock: Arc<Mutex<()>>,
     task: ActiveTask,
@@ -1060,7 +1110,7 @@ async fn run_query(
     let mut elapsed_op_times = Vec::new();
     let mut printed_debug_results = false;
     let mut query_result_ids = Array2::from_elem((view.dim().0, top_k), -1_i64);
-    let search_params = SearchParamsBuilder::default().hnsw_ef(ef_search).build();
+    let search_params = build_search_params(ef_search, quantization_rescore);
 
     let mark_workflow = should_mark_workflow(task);
     if mark_workflow && rank == 0 {
@@ -1377,11 +1427,12 @@ async fn run_query_streaming(
     top_k: usize,
     debug_results: bool,
     ef_search: u64,
+    quantization_rescore: Option<bool>,
     barrier: Arc<Barrier>,
     lock: Arc<Mutex<()>>,
     task: ActiveTask,
     ) -> anyhow::Result<QueryResultChunk> {
-    
+
     // Streaming query mirrors `run_query`, but materializes only one batch of vectors at a time.
     barrier.wait().await;
 
@@ -1392,7 +1443,7 @@ async fn run_query_streaming(
     let mut elapsed_op_times = Vec::new();
     let mut printed_debug_results = false;
     let mut query_result_ids = Array2::from_elem((end_slice - start_slice, top_k), -1_i64);
-    let search_params = SearchParamsBuilder::default().hnsw_ef(ef_search).build();
+    let search_params = build_search_params(ef_search, quantization_rescore);
 
     let mark_workflow = should_mark_workflow(task);
     if mark_workflow && rank == 0 {

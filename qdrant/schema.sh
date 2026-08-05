@@ -41,6 +41,7 @@ register_qdrant_var "QUANTIZATION_SCALAR_QUANTILE" "default" "" "" "Optional sca
 register_qdrant_var "QUANTIZATION_BINARY_ENCODING" "default" "DEFAULT" "DEFAULT TWO_BITS ONE_AND_HALF_BITS" "Binary quantization encoding; DEFAULT uses one bit"
 register_qdrant_var "QUANTIZATION_PRODUCT_COMPRESSION" "default" "X16" "X4 X8 X16 X32 X64" "Product quantization compression ratio"
 register_qdrant_var "QUANTIZATION_TURBO_BITS" "default" "BITS4" "BITS4 BITS2 BITS1_5 BITS1" "TurboQuant bit depth"
+register_qdrant_var "QUANTIZATION_RESCORE" "default" "" "" "Optional QUERY-only rescore override: empty omits QuantizationSearchParams so the server uses its per-quantization-type default; True/False forces rescoring on/off"
 
 
 # Insert / preload workload
