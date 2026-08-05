@@ -24,6 +24,9 @@ register_qdrant_var "QDRANT_LOCAL_IMAGE" "default" "" "" "Explicit local Qdrant 
 register_qdrant_var "QDRANT_EXECUTABLE" "default" "" "" "Optional local Qdrant executable override copied from qdrantBuilds; empty uses the executable inside the SIF"
 register_qdrant_var "LOG_LEVEL" "default" "ERROR" "ERROR DEBUG INFO" "Qdrant log level passed to generated node configs"
 
+# Collection creation
+register_qdrant_var "COLLECTION_DOCUMENT" "default" "" "" "Path to a shard-builder input document; when set, the collection is created verbatim from its collection section and the env collection vars (VECTOR_DIM, DISTANCE_METRIC, HNSW_*, QUANTIZATION_*, MAX_SEGMENT_SIZE, DEFAULT_SEGMENT_NUMBER) are ignored"
+
 # Index
 register_qdrant_var "HNSW_M" "default" "16" "" "HNSW M parameter"
 register_qdrant_var "HNSW_EF_CONSTRUCTION" "default" "100" "" "HNSW efConstruction parameter"

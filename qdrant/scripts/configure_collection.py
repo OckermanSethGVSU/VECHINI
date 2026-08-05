@@ -4,6 +4,7 @@ from qdrant_client.models import SearchRequest
 import time
 import json
 import os
+import urllib.request
 from pathlib import Path
 from qdrant_client.http.models import (
     ReplicateShard,
@@ -31,6 +32,47 @@ def env_optional_int(name: str) -> int | None:
     if value is None or value.strip() == "":
         return None
     return int(value.strip())
+
+
+def load_collection_document(path: str) -> dict:
+    """The document's `collection` section, transformed to the REST create body:
+    `params` flattened to the top level and `optimizer_config` renamed to
+    `optimizers_config` — the only two differences between the two forms.
+    Everything else, nulls included, passes through verbatim: the serving
+    collection must fingerprint-match the artifacts (verify-config), and any
+    field reconstructed differently is a full re-index on the first write."""
+    with open(path) as f:
+        doc = json.load(f)
+    section = doc["collection"]
+    body = dict(section.get("params") or {})
+    for key, value in section.items():
+        if key == "params":
+            continue
+        body["optimizers_config" if key == "optimizer_config" else key] = value
+    return body
+
+
+def qdrant_rest(method: str, url: str, payload: dict | None = None, timeout: int = 600) -> dict:
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = urllib.request.Request(
+        url, data=data, method=method, headers={"Content-Type": "application/json"}
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=timeout) as response:
+        return json.loads(response.read().decode())
+
+
+def create_collection_from_document(node: tuple, collection_name: str, body: dict) -> None:
+    # Raw REST on purpose: a round-trip through qdrant_client's typed models can
+    # silently drop or default fields the installed client version doesn't know.
+    url = f"http://{node[0]}:{node[1]}/collections/{collection_name}"
+    try:
+        qdrant_rest("DELETE", url)  # recreate semantics, matching the env path
+    except Exception:
+        pass
+    result = qdrant_rest("PUT", url, body)
+    if result.get("result") is not True:
+        raise RuntimeError(f"collection create returned {result}")
 
 
 def build_quantization_config():
@@ -180,32 +222,45 @@ total_shards = len(nodes)
 for i in range(len(nodes)):
     topology[f"{nodes[i][0]}:{nodes[i][1]}"] = [(i % total_shards)]
 
-vector_dim = int(os.environ["VECTOR_DIM"])
-hnsw_m = env_int("HNSW_M", 16)
-ef_construction = env_int("HNSW_EF_CONSTRUCTION", 100)
-max_segment_size = env_optional_int("MAX_SEGMENT_SIZE")
-default_segment_number = env_optional_int("DEFAULT_SEGMENT_NUMBER")
-distance_metric = os.environ["DISTANCE_METRIC"].strip().lower()
-quantization_config = build_quantization_config()
+collection_document = os.getenv("COLLECTION_DOCUMENT", "").strip()
 
-match distance_metric:
-    case "dot" | "ip" | "innerproduct":
-        metric = models.Distance.DOT
-    case "cosine":
-        metric = models.Distance.COSINE
-    case "euclidan" | "l2":
-        metric = models.Distance.EUCLID
-    case _:
-        raise ValueError(f"Unknown distance metric: {distance_metric}")
+if collection_document:
+    print(
+        f"COLLECTION_DOCUMENT={collection_document}: collection body comes from the "
+        "document verbatim; env collection vars (VECTOR_DIM, DISTANCE_METRIC, HNSW_M, "
+        "HNSW_EF_CONSTRUCTION, MAX_SEGMENT_SIZE, DEFAULT_SEGMENT_NUMBER, QUANTIZATION_*) "
+        "are ignored.",
+        flush=True,
+    )
+    collection_body = load_collection_document(collection_document)
+    doc_shards = collection_body.get("shard_number")
+    if doc_shards is not None and doc_shards != len(nodes):
+        print(
+            f"[warn] document shard_number={doc_shards} but the cluster has "
+            f"{len(nodes)} qdrant nodes",
+            flush=True,
+        )
+else:
+    vector_dim = int(os.environ["VECTOR_DIM"])
+    hnsw_m = env_int("HNSW_M", 16)
+    ef_construction = env_int("HNSW_EF_CONSTRUCTION", 100)
+    max_segment_size = env_optional_int("MAX_SEGMENT_SIZE")
+    default_segment_number = env_optional_int("DEFAULT_SEGMENT_NUMBER")
+    distance_metric = os.environ["DISTANCE_METRIC"].strip().lower()
+    quantization_config = build_quantization_config()
+
+    match distance_metric:
+        case "dot" | "ip" | "innerproduct":
+            metric = models.Distance.DOT
+        case "cosine":
+            metric = models.Distance.COSINE
+        case "euclidean" | "euclid" | "euclidan" | "l2":
+            metric = models.Distance.EUCLID
+        case _:
+            raise ValueError(f"Unknown distance metric: {distance_metric}")
 
 while True:
     try:
-        optimizers_kwargs = {"indexing_threshold": 0}
-        if max_segment_size is not None:
-            optimizers_kwargs["max_segment_size"] = max_segment_size
-        if default_segment_number is not None:
-            optimizers_kwargs["default_segment_number"] = default_segment_number
-
         client = QdrantClient(
                 host=nodes[0][0],
                 port=nodes[0][1],
@@ -214,6 +269,17 @@ while True:
                 timeout=600,
                 grpc_options={"grpc.enable_http_proxy": 0},
             )
+
+        if collection_document:
+            create_collection_from_document(nodes[0], collection_name, collection_body)
+            break
+
+        optimizers_kwargs = {"indexing_threshold": 0}
+        if max_segment_size is not None:
+            optimizers_kwargs["max_segment_size"] = max_segment_size
+        if default_segment_number is not None:
+            optimizers_kwargs["default_segment_number"] = default_segment_number
+
         collection_kwargs = {
             "collection_name": collection_name,
             "vectors_config": models.VectorParams(size=vector_dim, distance=metric),
@@ -230,7 +296,7 @@ while True:
         client.recreate_collection(
             **collection_kwargs,
         )
-        
+
         break
     except Exception as e:
         # Optional: log the error

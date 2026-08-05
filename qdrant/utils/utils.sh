@@ -14,9 +14,13 @@ print_config_summary() {
             echo "Perf Events:              default"
         fi
     fi
-    echo "Vector Dim:               $VECTOR_DIM"
-    echo "Distance Metric:          $DISTANCE_METRIC"
-    echo "Quantization Type:        $QUANTIZATION_TYPE"
+    if [[ -n "${COLLECTION_DOCUMENT:-}" ]]; then
+        echo "Collection Document:      $COLLECTION_DOCUMENT (env collection vars ignored)"
+    else
+        echo "Vector Dim:               $VECTOR_DIM"
+        echo "Distance Metric:          $DISTANCE_METRIC"
+        echo "Quantization Type:        $QUANTIZATION_TYPE"
+    fi
     echo "GPU Index:                $GPU_INDEX"
     echo "Qdrant Version:           ${QDRANT_VERSION:-default}"
     echo "Qdrant SIF:               ${QDRANT_SIF:-n/a}"
