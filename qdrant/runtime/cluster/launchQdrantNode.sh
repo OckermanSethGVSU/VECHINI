@@ -80,6 +80,7 @@ apptainer exec \
     --bind ${TARGET_BASE}/snapshots/node$RANK:/qdrant/snapshots \
     --env PERF=$PERF \
     --env PERF_EVENTS=$PERF_EVENTS \
+    --env ARTIFACT_INSTALL=${ARTIFACT_INSTALL:-0} \
     --env INSERT_TRACE=$INSERT_TRACE \
     --env QUERY_TRACE=$QUERY_TRACE \
     "${BUILD_ARGS[@]}" \

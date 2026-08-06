@@ -132,6 +132,61 @@ else
 
 fi
 
+# Artifact-install lifecycle (ARTIFACT_DIR runs): the head node creates the collection
+# on the live cluster, reads the shard assignment, then needs every qdrant stopped to
+# install the prebuilt shards -- they are read at startup only. Quiesce, wait for the
+# install, relaunch on the installed data. The relaunch passes no --bootstrap: raft
+# state persists in storage and the peer rejoins from it.
+if is_truth "$ARTIFACT_INSTALL"; then
+    TARGET="/runtime_state/install_ready.txt"
+    while [ ! -e "$TARGET" ]; do
+      sleep 0.5
+    done
+
+    echo "Rank ${RANK} stopping qdrant for artifact install"
+    kill "$QDRANT_PID" 2>/dev/null || true
+    wait "$QDRANT_PID" 2>/dev/null || true
+    touch "/runtime_state/qdrant_stopped${RANK}.txt"
+
+    TARGET="/runtime_state/install_done_${RANK}.txt"
+    while [ ! -e "$TARGET" ]; do
+      sleep 0.5
+    done
+
+    echo "Rank ${RANK} relaunching qdrant on installed data"
+    while true; do
+      env "${QDRANT_LAUNCH_ENV[@]}" \
+      ./qdrant --uri "http://${IP_ADDR}:${P2P_PORT}" --config-path /qdrant/config/config.yaml &
+      QDRANT_PID=$!
+      HTTP_PORT=$((P2P_PORT - 2))
+
+      # Loading a full-size shard takes real time -- ~522 GiB of graph + quantized
+      # vectors read from Lustre into RAM per node before /healthz answers -- so each
+      # attempt gets a full hour before the retry loop gives up on it. A kill mid-load
+      # is safe (the next attempt starts normally) but throws away all loading progress,
+      # so err on the long side.
+      healthy=false
+      for i in {1..1800}; do
+          if NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" healthcheck "$IP_ADDR" "$HTTP_PORT"; then
+              echo "Rank ${RANK} qdrant ${IP_ADDR}:${P2P_PORT} is healthy on installed data"
+              healthy=true
+              touch "/runtime_state/qdrant_running_installed${RANK}.txt"
+              break
+          fi
+          sleep 2
+      done
+
+      if [[ "$healthy" == true ]]; then
+          break
+      fi
+
+      echo "Rank ${RANK} relaunch failed to become healthy, restarting..."
+      kill "$QDRANT_PID" 2>/dev/null || true
+      wait "$QDRANT_PID" 2>/dev/null || true
+      sleep 5
+    done
+fi
+
 # wait until the file exists
 TARGET="/runtime_state/workflow_start.txt"
 while [ ! -e "$TARGET" ]; do

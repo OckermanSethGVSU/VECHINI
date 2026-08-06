@@ -67,6 +67,13 @@ register_qdrant_var "RPC_TIMEOUT" "default" "" "" "Optional RPC timeout override
 register_qdrant_var "RESTORE_DIR" "default" "" "" "Restore an existing Qdrant state from this directory"
 register_qdrant_var "EXPECTED_CORPUS_SIZE" "default" "10000000" "" "Expected corpus size when restoring"
 
+# Artifact install
+register_qdrant_var "ARTIFACT_DIR" "default" "" "" "Directory of assembled shard-builder artifacts (shard_0/..shard_N-1); with TASK=LAUNCH the artifacts are installed into the cluster (create -> verify-config -> install-plan -> stop -> install -> relaunch -> verify) before serving. Requires STORAGE_MEDIUM=lustre, COLLECTION_DOCUMENT, and SHARD_BUILDER_BIN; mutually exclusive with RESTORE_DIR"
+register_qdrant_var "INSTALL_MODE" "default" "move" "move copy" "How shards are installed from ARTIFACT_DIR: move renames each shard directory into place (seconds, but CONSUMES the artifacts -- keep a backup); copy preserves them at the cost of copying every byte"
+register_qdrant_var "SHARD_BUILDER_BIN" "default" "" "" "Path to the qdrant-shard-builder binary (verify-config / install-plan / verify-placement); required when ARTIFACT_DIR is set, and must be built for the cluster's glibc"
+register_qdrant_var "SCATTER_WORK_DIR" "default" "" "" "Scatter working directory the artifacts were built from; when set, verify-placement runs after the install, otherwise the exact point-count check stands in"
+register_qdrant_var "CREATE_COLLECTION" "default" "False" "True False" "TASK=LAUNCH only: create the collection (configure_collection.py) once the cluster is up; implied by ARTIFACT_DIR"
+
 
 # Profiling
 register_qdrant_var "PERF" "default" "NONE" "NONE STAT RECORD" "Performance collection mode"

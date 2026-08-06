@@ -1,6 +1,5 @@
 from qdrant_client import QdrantClient, models
 from collections import defaultdict
-from qdrant_client.models import SearchRequest
 import time
 import json
 import os
@@ -240,6 +239,17 @@ if collection_document:
             f"{len(nodes)} qdrant nodes",
             flush=True,
         )
+        if rebalance_topology:
+            # The rebalance topology maps one shard per node and DROPS every other
+            # shard's replica, which with more shards than nodes destroys shards.
+            # The artifact install consumes the assignment consensus made either
+            # way, so skipping the rebalance is safe; forcing it is not.
+            print(
+                "[warn] REBALANCE_TOPOLOGY=True requires shard_number == node count; "
+                "skipping the rebalance and keeping consensus's own assignment.",
+                flush=True,
+            )
+            rebalance_topology = False
 else:
     vector_dim = int(os.environ["VECTOR_DIM"])
     hnsw_m = env_int("HNSW_M", 16)

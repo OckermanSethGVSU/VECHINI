@@ -188,6 +188,46 @@ engine_load_combo() {
     fi
 }
 
+# Validate the artifact-install combination (ARTIFACT_DIR set). Runs per combo so
+# the scalar globals are resolved. Every rule here guards a failure that would
+# otherwise surface hours into a job -- or not at all.
+qdrant_validate_artifact_install() {
+    [[ -n "${ARTIFACT_DIR:-}" ]] || return 0
+
+    if [[ "${TASK^^}" != "LAUNCH" ]]; then
+        echo "ARTIFACT_DIR requires TASK=LAUNCH (install-and-serve); got TASK=$TASK" >&2
+        return 1
+    fi
+    if [[ -n "${RESTORE_DIR:-}" ]]; then
+        echo "ARTIFACT_DIR and RESTORE_DIR are different restore models (shard-builder artifacts vs a saved storage tree); set only one." >&2
+        return 1
+    fi
+    if [[ "$STORAGE_MEDIUM" != "lustre" ]]; then
+        echo "ARTIFACT_DIR requires STORAGE_MEDIUM=lustre: the install renames/copies into every rank's storage tree from the head node, and memory cannot hold a full-size shard." >&2
+        return 1
+    fi
+    if [[ "${WORKERS_PER_NODE_CURRENT:-${WORKERS_PER_NODE:-1}}" != "1" ]]; then
+        echo "ARTIFACT_DIR requires WORKERS_PER_NODE=1 (one qdrant, one storage tree per node)." >&2
+        return 1
+    fi
+    if [[ -z "${COLLECTION_DOCUMENT:-}" ]]; then
+        echo "ARTIFACT_DIR requires COLLECTION_DOCUMENT: the collection must be created from the same document the artifacts were built from, or the first write triggers a full re-index." >&2
+        return 1
+    fi
+    if [[ -z "${SHARD_BUILDER_BIN:-}" ]]; then
+        echo "ARTIFACT_DIR requires SHARD_BUILDER_BIN (verify-config / install-plan / verify-placement)." >&2
+        return 1
+    fi
+    if [[ ! -x "$SHARD_BUILDER_BIN" ]]; then
+        echo "SHARD_BUILDER_BIN is missing or not executable: $SHARD_BUILDER_BIN" >&2
+        return 1
+    fi
+    if [[ ! -f "$COLLECTION_DOCUMENT" ]]; then
+        echo "COLLECTION_DOCUMENT not found: $COLLECTION_DOCUMENT" >&2
+        return 1
+    fi
+}
+
 qdrant_perf_enabled() {
     [[ "${PERF^^}" == "STAT" || "${PERF^^}" == "RECORD" ]]
 }
@@ -212,6 +252,7 @@ engine_validate_combo() {
     schema_validate_current_values "$ENGINE_SCHEMA_PREFIX" || return 1
     schema_validate_recall_config || return 1
     qdrant_validate_runtime_selection || return 1
+    qdrant_validate_artifact_install || return 1
     qdrant_validate_perf_payload
 }
 
@@ -240,6 +281,15 @@ engine_emit_runtime_env() {
 
     schema_emit_runtime_env "$ENGINE_SCHEMA_PREFIX"
     printf 'INSERT_START_ID=%s\n' "${INSERT_START_ID:-}"
+
+    # Artifact runs install with the document frozen into the run dir at generation
+    # time (engine_copy_payload); the later assignment wins when run_config.env is
+    # sourced, so the job cannot drift from the artifacts if the original is edited.
+    # The source path is recorded alongside, purely for provenance.
+    if [[ -n "${ARTIFACT_DIR:-}" ]]; then
+        printf 'COLLECTION_DOCUMENT_SOURCE=%s\n' "${COLLECTION_DOCUMENT}"
+        printf 'COLLECTION_DOCUMENT=%s\n' "collection_document.json"
+    fi
 }
 
 # Stage the Qdrant binaries, launch scripts, and task-specific helper scripts.
@@ -286,6 +336,16 @@ engine_copy_payload() {
 
     if [[ -n "$RESTORE_DIR" ]]; then
         copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "fix_peer_id.py" "collection_status.py"
+    fi
+
+    if [[ -n "${ARTIFACT_DIR:-}" ]]; then
+        copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" \
+            "install_shards.sh" "make_install_map.py" "verify_restore.py"
+        # Freeze the exact binary and document this run installs with, so the run dir
+        # is self-describing and a later edit to either cannot change a queued job.
+        cp "$SHARD_BUILDER_BIN" "$target_dir/qdrant-shard-builder" || return 1
+        chmod +x "$target_dir/qdrant-shard-builder"
+        cp "$COLLECTION_DOCUMENT" "$target_dir/collection_document.json" || return 1
     fi
 
     copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "summarize_client_timings.py"

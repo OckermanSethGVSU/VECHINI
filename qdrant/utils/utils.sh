@@ -29,7 +29,12 @@ print_config_summary() {
     echo "Insert Trace:             $INSERT_TRACE"
     echo "Query Trace:              $QUERY_TRACE"
 
-    if [[ -n "$RESTORE_DIR" ]]; then
+    if [[ -n "${ARTIFACT_DIR:-}" ]]; then
+        echo "Artifact Dir:             $ARTIFACT_DIR (INSTALL_MODE=${INSTALL_MODE:-move} -- move CONSUMES the artifacts)"
+        echo "Shard Builder Bin:        $SHARD_BUILDER_BIN"
+        echo "Scatter Work Dir:         ${SCATTER_WORK_DIR:-<unset: count check only, no verify-placement>}"
+        echo "Expected Corpus Size:     $EXPECTED_CORPUS_SIZE"
+    elif [[ -n "$RESTORE_DIR" ]]; then
         echo "Restore Dir:              $RESTORE_DIR"
         echo "Expected Corpus Size:     $EXPECTED_CORPUS_SIZE"
     else
