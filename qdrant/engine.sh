@@ -399,7 +399,7 @@ engine_copy_payload() {
         # the shard-builder binary and collection document below).
         cp "$NOVA_STORM_BIN" "$target_dir/nova-storm" || return 1
         chmod +x "$target_dir/nova-storm"
-        copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "storm_aggregate.py"
+        copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "storm_aggregate.py" "storm_pick_best.py"
         local storm_index=0 storm_cfg
         IFS=',' read -r -a _storm_cfgs <<< "$STORM_CONFIG"
         for storm_cfg in "${_storm_cfgs[@]}"; do

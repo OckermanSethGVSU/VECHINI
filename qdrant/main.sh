@@ -122,35 +122,100 @@ run_nova_storm() {
     grpc_url=$(head -n 1 ./runtime_state/endpoints_grpc.txt)
     mkdir -p stormResults
 
-    local -a configs
+    local -a configs ks bs cs
     IFS=',' read -r -a configs <<< "${STORM_CONFIGS_STAGED:?TASK=STORM but no staged storm configs}"
+    IFS=',' read -r -a ks <<< "${STORM_TOP_K:-10}"
+    IFS=',' read -r -a bs <<< "${STORM_BATCH_SIZE:-1}"
+    IFS=',' read -r -a cs <<< "${STORM_CONCURRENCY:-4}"
 
+    # Flatten the whole (config, k, batch, concurrency) grid into ONE ordered
+    # list, rotated per repeat, so every setting samples every cache-locality
+    # position -- not just the config order but the k/batch/concurrency order
+    # too. Rotation offsets are spread evenly across the list so three repeats
+    # start a third of the way apart.
+    # Ordered LARGEST OFFERED LOAD FIRST (batch x concurrency, then batch):
+    # the job front-loads its high-throughput cells, so early results are the
+    # informative ones and a walltime cut only costs the slow low-parallelism
+    # corners. Rotation still shifts the start point on later repeats, so
+    # repeat 1 is strictly largest-first and the rest sample other positions.
+    local cfg k b c
+    local -a settings=()
+    while IFS='|' read -r _ cfg k b c; do
+        settings+=("${cfg}|${k}|${b}|${c}")
+    done < <(
+        for cfg in "${configs[@]}"; do
+            for k in "${ks[@]}"; do for b in "${bs[@]}"; do for c in "${cs[@]}"; do
+                printf '%012d|%s|%s|%s|%s\n' "$(( b * c ))" "$cfg" "$k" "$b" "$c"
+            done; done; done
+        done | sort -t'|' -k1,1nr -k4,4nr
+    )
+    local total=${#settings[@]}
     local repeats="${STORM_REPEATS:-1}"
-    local n=${#configs[@]}
-    local cfg name rep offset i failed=0
-    for ((rep=1; rep<=repeats; rep++)); do
-        # Rotate the starting position each repeat (deterministic, reproducible)
-        # so every config samples every position -- first-in-line runs against a
-        # cold page cache, last-in-line against whatever the others warmed; the
-        # rotation plus the aggregator's medians controls for that.
-        offset=0
-        if [[ "${STORM_ORDER:-rotate}" == "rotate" ]]; then
-            offset=$(( (rep - 1) % n ))
+    local sweep_limit="${STORM_SWEEP_QUERY_LIMIT:-5000}"
+    echo "[storm] plan: ${total} settings (${#configs[@]} configs x k={${STORM_TOP_K:-10}} x b={${STORM_BATCH_SIZE:-1}} x c={${STORM_CONCURRENCY:-4}}) x ${repeats} repeats, fixed-work at <=${sweep_limit} queries each; then best-per-(config,k) full-file recall passes ($( [[ "${STORM_FULL_RECALL:-True}" == "True" ]] && echo on || echo off ))"
+
+    run_one_storm() {  # <name> <cfg> <k> <b> <c> <passes> <query_limit>
+        local name="$1" cfg="$2" k="$3" b="$4" c="$5" passes="$6" limit="$7"
+        if NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" \
+            QDRANT_URL="$grpc_url" STORM_PASSES="$passes" QUERY_LIMIT="$limit" \
+            STORM_TOP_K="$k" STORM_BATCH_SIZE="$b" STORM_CONCURRENCY="$c" \
+            ./nova-storm --json "$cfg" \
+            > "stormResults/${name}.json" 2> "stormResults/${name}.log"; then
+            echo "[storm] $name: $(cat "stormResults/${name}.json")"
+        else
+            echo "[storm] $name FAILED (exit $?) -- see stormResults/${name}.log" >&2
+            return 1
         fi
-        for ((i=0; i<n; i++)); do
-            cfg="${configs[$(( (i + offset) % n ))]}"
-            name="$(basename "$cfg" .yaml)_rep${rep}"
-            echo "[storm] repeat ${rep}/${repeats}: running $cfg against $grpc_url"
-            if NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""                 QDRANT_URL="$grpc_url" ./nova-storm --json "$cfg"                 > "stormResults/${name}.json" 2> "stormResults/${name}.log"; then
-                echo "[storm] $name: $(cat "stormResults/${name}.json")"
-            else
-                echo "[storm] $name FAILED (exit $?) -- see stormResults/${name}.log" >&2
-                failed=1
-            fi
+    }
+
+    local rep offset j setting name failed=0
+    for ((rep=1; rep<=repeats; rep++)); do
+        offset=0
+        if [[ "${STORM_ORDER:-rotate}" == "rotate" && "$repeats" -gt 1 ]]; then
+            offset=$(( (rep - 1) * total / repeats ))
+        fi
+        for ((j=0; j<total; j++)); do
+            setting="${settings[$(( (j + offset) % total ))]}"
+            IFS='|' read -r cfg k b c <<< "$setting"
+            name="$(basename "$cfg" .yaml)_k${k}_b${b}_c${c}_rep${rep}"
+            echo "[storm] sweep rep ${rep}/${repeats} ($((j + 1))/${total}): $(basename "$cfg") k=${k} b=${b} c=${c}"
+            run_one_storm "$name" "$cfg" "$k" "$b" "$c" 1 "$sweep_limit" || failed=1
         done
+        # Refresh the aggregate after every repeat: a walltime kill or crash
+        # mid-sweep then still leaves a current summary.csv next to the
+        # per-invocation JSONs, not just raw files.
+        python3 storm_aggregate.py stormResults > /dev/null 2>&1 || true
     done
 
+    # Final sweep aggregate (loud this time) so pick-best has medians.
     python3 storm_aggregate.py stormResults || failed=1
+
+    # Winner phases: per (config, k), the (b, c) with the highest median qps.
+    if [[ "${STORM_FULL_RECALL:-True}" == "True" ]]; then
+        python3 storm_pick_best.py stormResults/summary.csv > ./runtime_state/storm_best.txt \
+            || { echo "[storm] pick-best failed" >&2; return 1; }
+        local wname wk wb wc wcfg
+        while read -r wname wk wb wc; do
+            # resolve the winner's config file from its basename
+            wcfg=""
+            for cfg in "${configs[@]}"; do
+                [[ "$(basename "$cfg" .yaml)" == "$wname" ]] && wcfg="$cfg"
+            done
+            [[ -n "$wcfg" ]] || { echo "[storm] cannot resolve config for winner ${wname}" >&2; failed=1; continue; }
+
+            # The citable recall@k AND the full-scale throughput measurement in
+            # one: an exact fixed-work pass over the ENTIRE query file at the
+            # winning setting (dense = 100k queries -- long enough to be a
+            # sustained-load number in its own right).
+            name="${wname}_k${wk}_b${wb}_c${wc}_fullrecall_rep1"
+            echo "[storm] full-file recall pass: ${wname} k=${wk} b=${wb} c=${wc}"
+            run_one_storm "$name" "$wcfg" "$wk" "$wb" "$wc" 1 1000000 || failed=1
+        done < ./runtime_state/storm_best.txt
+
+        # Re-aggregate so the winner-phase rows join summary.csv.
+        python3 storm_aggregate.py stormResults || failed=1
+    fi
+
     return $failed
 }
 

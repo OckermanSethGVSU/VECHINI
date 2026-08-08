@@ -80,6 +80,11 @@ register_qdrant_var "NOVA_STORM_BIN" "default" "" "" "Path to the nova-storm bin
 register_qdrant_var "STORM_CONFIG" "default" "" "" "Comma-separated nova-storm YAML config paths, frozen into the run dir at generation time and run SEQUENTIALLY against the served collection; each receives QDRANT_URL (rank 0 gRPC) and the exported run env (COLLECTION_NAME etc.) for its \${VAR} substitutions"
 register_qdrant_var "STORM_HOLD" "default" "False" "True False" "TASK=STORM: after the storm configs finish, hold the cluster up (LAUNCH semantics, stop via flag.txt) instead of tearing down"
 register_qdrant_var "STORM_REPEATS" "default" "1" "" "TASK=STORM: run the whole config list this many times; per-repeat JSONs are kept and storm_aggregate.py reports median/min/max per config (medians control for cache warm-up and run-to-run jitter)"
+register_qdrant_var "STORM_TOP_K" "default" "10" "" "Comma-separated top_k values swept WITHIN the job for every storm config (e.g. 10,100,1000); each invocation exports STORM_TOP_K so YAMLs can use top_k: \${STORM_TOP_K} and ground_truth_column: hit_uuids_\${STORM_TOP_K}"
+register_qdrant_var "STORM_BATCH_SIZE" "default" "1" "" "Comma-separated batch_size values swept WITHIN the job (YAMLs use batch_size: \${STORM_BATCH_SIZE})"
+register_qdrant_var "STORM_CONCURRENCY" "default" "32" "" "Comma-separated concurrency values swept WITHIN the job (YAMLs use concurrency: \${STORM_CONCURRENCY})"
+register_qdrant_var "STORM_SWEEP_QUERY_LIMIT" "default" "5000" "" "Queries loaded per SWEEP invocation (fixed-work = one pass over this many); caps the low-concurrency cells that would otherwise take an hour each at full file size. Winner recall passes always use the full file"
+register_qdrant_var "STORM_FULL_RECALL" "default" "True" "True False" "TASK=STORM: after the sweep, run one FULL-FILE fixed-work pass at the best-qps (batch, concurrency) per (config, k) (storm_pick_best.py) -- the citable exact recall@k over the entire query set, and a sustained full-scale run in its own right; results land as *_fullrecall_rep1"
 register_qdrant_var "STORM_ORDER" "default" "rotate" "rotate fixed" "TASK=STORM with repeats: rotate the config order each repeat (each config samples every position, controlling for cache-locality carryover between workloads) or keep it fixed"
 
 
