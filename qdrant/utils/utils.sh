@@ -29,6 +29,11 @@ print_config_summary() {
     echo "Insert Trace:             $INSERT_TRACE"
     echo "Query Trace:              $QUERY_TRACE"
 
+    if [[ "${TASK^^}" == "STORM" ]]; then
+        echo "Nova Storm Bin:           $NOVA_STORM_BIN"
+        echo "Storm Configs:            $STORM_CONFIG"
+        echo "Storm Hold After:         ${STORM_HOLD:-False}"
+    fi
     if [[ -n "${ARTIFACT_DIR:-}" ]]; then
         echo "Artifact Dir:             $ARTIFACT_DIR (INSTALL_MODE=${INSTALL_MODE:-move} -- move CONSUMES the artifacts)"
         echo "Shard Builder Bin:        $SHARD_BUILDER_BIN"

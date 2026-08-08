@@ -72,7 +72,15 @@ register_qdrant_var "ARTIFACT_DIR" "default" "" "" "Directory of assembled shard
 register_qdrant_var "INSTALL_MODE" "default" "move" "move copy" "How shards are installed from ARTIFACT_DIR: move renames each shard directory into place (seconds, but CONSUMES the artifacts -- keep a backup); copy preserves them at the cost of copying every byte"
 register_qdrant_var "SHARD_BUILDER_BIN" "default" "" "" "Path to the qdrant-shard-builder binary (verify-config / install-plan / verify-placement); required when ARTIFACT_DIR is set, and must be built for the cluster's glibc"
 register_qdrant_var "SCATTER_WORK_DIR" "default" "" "" "Scatter working directory the artifacts were built from; when set, verify-placement runs after the install, otherwise the exact point-count check stands in"
-register_qdrant_var "CREATE_COLLECTION" "default" "False" "True False" "TASK=LAUNCH only: create the collection (configure_collection.py) once the cluster is up; implied by ARTIFACT_DIR"
+register_qdrant_var "CREATE_COLLECTION" "default" "False" "True False" "TASK=LAUNCH/STORM: create the collection (configure_collection.py) once the cluster is up; implied by ARTIFACT_DIR"
+
+# Storm (TASK=STORM: drive nova-storm query workloads from the client node against the served
+# collection -- WHATEVER provided it: ARTIFACT_DIR install, RESTORE_DIR tree, or CREATE_COLLECTION)
+register_qdrant_var "NOVA_STORM_BIN" "default" "" "" "Path to the nova-storm binary (supernova); required when TASK=STORM, staged into the run dir, and must be built for the cluster's glibc (same Rocky-8 trick as the shard-builder binary)"
+register_qdrant_var "STORM_CONFIG" "default" "" "" "Comma-separated nova-storm YAML config paths, frozen into the run dir at generation time and run SEQUENTIALLY against the served collection; each receives QDRANT_URL (rank 0 gRPC) and the exported run env (COLLECTION_NAME etc.) for its \${VAR} substitutions"
+register_qdrant_var "STORM_HOLD" "default" "False" "True False" "TASK=STORM: after the storm configs finish, hold the cluster up (LAUNCH semantics, stop via flag.txt) instead of tearing down"
+register_qdrant_var "STORM_REPEATS" "default" "1" "" "TASK=STORM: run the whole config list this many times; per-repeat JSONs are kept and storm_aggregate.py reports median/min/max per config (medians control for cache warm-up and run-to-run jitter)"
+register_qdrant_var "STORM_ORDER" "default" "rotate" "rotate fixed" "TASK=STORM with repeats: rotate the config order each repeat (each config samples every position, controlling for cache-locality carryover between workloads) or keep it fixed"
 
 
 # Profiling

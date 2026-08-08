@@ -109,6 +109,51 @@ write_endpoints_file() {
     echo "Cluster endpoints written to runtime_state/endpoints.txt (REST) and endpoints_grpc.txt (gRPC, for storm)"
 }
 
+# TASK=STORM: drive the staged nova-storm configs sequentially from this (the
+# client) node against the served collection. Each config gets QDRANT_URL
+# (rank 0's gRPC endpoint) plus the full exported run env for its ${VAR}
+# substitutions; results land in stormResults/ as one JSON summary + one
+# stderr log per config. A config whose dispatches ALL fail exits nonzero
+# (nova-storm's total-failure guard) -- that marks the run failed here but
+# does not stop the remaining configs, so one bad workload cannot waste the
+# cluster the job already paid to install.
+run_nova_storm() {
+    local grpc_url
+    grpc_url=$(head -n 1 ./runtime_state/endpoints_grpc.txt)
+    mkdir -p stormResults
+
+    local -a configs
+    IFS=',' read -r -a configs <<< "${STORM_CONFIGS_STAGED:?TASK=STORM but no staged storm configs}"
+
+    local repeats="${STORM_REPEATS:-1}"
+    local n=${#configs[@]}
+    local cfg name rep offset i failed=0
+    for ((rep=1; rep<=repeats; rep++)); do
+        # Rotate the starting position each repeat (deterministic, reproducible)
+        # so every config samples every position -- first-in-line runs against a
+        # cold page cache, last-in-line against whatever the others warmed; the
+        # rotation plus the aggregator's medians controls for that.
+        offset=0
+        if [[ "${STORM_ORDER:-rotate}" == "rotate" ]]; then
+            offset=$(( (rep - 1) % n ))
+        fi
+        for ((i=0; i<n; i++)); do
+            cfg="${configs[$(( (i + offset) % n ))]}"
+            name="$(basename "$cfg" .yaml)_rep${rep}"
+            echo "[storm] repeat ${rep}/${repeats}: running $cfg against $grpc_url"
+            if NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""                 QDRANT_URL="$grpc_url" ./nova-storm --json "$cfg"                 > "stormResults/${name}.json" 2> "stormResults/${name}.log"; then
+                echo "[storm] $name: $(cat "stormResults/${name}.json")"
+            else
+                echo "[storm] $name FAILED (exit $?) -- see stormResults/${name}.log" >&2
+                failed=1
+            fi
+        done
+    done
+
+    python3 storm_aggregate.py stormResults || failed=1
+    return $failed
+}
+
 # Install prebuilt shard-builder artifacts into the running cluster, then relaunch it
 # on the installed data. Sequence (verified upstream in the shard-builder README): 
 # create the collection from the same document the artifacts were built from 
@@ -339,14 +384,38 @@ line=$(head -n 1 ip_registry.txt)
 IFS=',' read -r id ip port <<< "$line"
 port=$((port - 1))
 
-if [[ "$TASK" == "LAUNCH" ]]; then
+if [[ "$TASK" == "LAUNCH" || "$TASK" == "STORM" ]]; then
+    # Collection provenance -- orthogonal to the task. Artifact install builds
+    # the collection from prebuilt shards; RESTORE_DIR trees were already
+    # restored per node at launch (just confirm the collection is up);
+    # CREATE_COLLECTION starts one fresh (empty unless something fills it).
     if [[ -n "${ARTIFACT_DIR:-}" ]]; then
         artifact_install_flow
+    elif [[ -n "${RESTORE_DIR:-}" ]]; then
+        NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" python3 collection_status.py
     elif [[ "${CREATE_COLLECTION:-False}" == "True" ]]; then
         run_configure_collection
     fi
     write_endpoints_file
-    wait_for_launch_stop_flag
+    if [[ "$TASK" == "STORM" ]]; then
+        export ACTIVE_TASK="STORM"
+        # workflow_start releases the per-node profilers for the measurement
+        # window; workflow_stop closes it before results are finalized.
+        touch ./runtime_state/workflow_start.txt
+        storm_status=0
+        run_nova_storm || storm_status=1
+        touch ./runtime_state/workflow_stop.txt
+        if [[ "$storm_status" -ne 0 ]]; then
+            echo "[storm] one or more storm configs failed -- see stormResults/" >&2
+        fi
+        if [[ "${STORM_HOLD:-False}" == "True" ]]; then
+            wait_for_launch_stop_flag
+        else
+            finalize_cluster_run
+        fi
+    else
+        wait_for_launch_stop_flag
+    fi
 else
 
 if [ -z "$RESTORE_DIR" ]; then

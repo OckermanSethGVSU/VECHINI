@@ -194,8 +194,8 @@ engine_load_combo() {
 qdrant_validate_artifact_install() {
     [[ -n "${ARTIFACT_DIR:-}" ]] || return 0
 
-    if [[ "${TASK^^}" != "LAUNCH" ]]; then
-        echo "ARTIFACT_DIR requires TASK=LAUNCH (install-and-serve); got TASK=$TASK" >&2
+    if [[ "${TASK^^}" != "LAUNCH" && "${TASK^^}" != "STORM" ]]; then
+        echo "ARTIFACT_DIR requires TASK=LAUNCH or TASK=STORM (install-and-serve); got TASK=$TASK" >&2
         return 1
     fi
     if [[ -n "${RESTORE_DIR:-}" ]]; then
@@ -228,6 +228,41 @@ qdrant_validate_artifact_install() {
     fi
 }
 
+# Validate the storm combination (TASK=STORM): the binary and config(s) are
+# staged into the run dir, so both must exist at generation time.
+qdrant_validate_storm() {
+    [[ "${TASK^^}" == "STORM" ]] || return 0
+
+    # STORM is a WORKLOAD; where the collection comes from is a separate,
+    # orthogonal axis. Any provenance works -- artifact install, a restored
+    # storage tree, or a freshly created (empty) collection -- but one of them
+    # must be chosen, or the storm has nothing to query.
+    if [[ -z "${ARTIFACT_DIR:-}" && -z "${RESTORE_DIR:-}" && "${CREATE_COLLECTION:-False}" != "True" ]]; then
+        echo "TASK=STORM needs a collection to query: set ARTIFACT_DIR (shard-builder install), RESTORE_DIR (saved storage tree), or CREATE_COLLECTION=True (fresh empty collection)." >&2
+        return 1
+    fi
+    if [[ -z "${NOVA_STORM_BIN:-}" ]]; then
+        echo "TASK=STORM requires NOVA_STORM_BIN (the nova-storm binary, built for the cluster's glibc)." >&2
+        return 1
+    fi
+    if [[ ! -x "$NOVA_STORM_BIN" ]]; then
+        echo "NOVA_STORM_BIN is missing or not executable: $NOVA_STORM_BIN" >&2
+        return 1
+    fi
+    if [[ -z "${STORM_CONFIG:-}" ]]; then
+        echo "TASK=STORM requires STORM_CONFIG (comma-separated nova-storm YAML paths)." >&2
+        return 1
+    fi
+    local cfg
+    IFS=',' read -r -a _storm_cfgs <<< "$STORM_CONFIG"
+    for cfg in "${_storm_cfgs[@]}"; do
+        if [[ ! -f "$cfg" ]]; then
+            echo "STORM_CONFIG entry not found: $cfg" >&2
+            return 1
+        fi
+    done
+}
+
 qdrant_perf_enabled() {
     [[ "${PERF^^}" == "STAT" || "${PERF^^}" == "RECORD" ]]
 }
@@ -253,6 +288,7 @@ engine_validate_combo() {
     schema_validate_recall_config || return 1
     qdrant_validate_runtime_selection || return 1
     qdrant_validate_artifact_install || return 1
+    qdrant_validate_storm || return 1
     qdrant_validate_perf_payload
 }
 
@@ -273,6 +309,14 @@ engine_main_script_path() {
     fi
 }
 
+# The staged (run-dir-relative) name of the i-th STORM_CONFIG entry. One
+# function so engine_copy_payload and engine_emit_runtime_env can never
+# disagree about the naming.
+qdrant_storm_staged_name() {
+    local index="$1" path="$2"
+    printf 'storm_%s_%s' "$index" "$(basename "$path")"
+}
+
 # Emit run_config.env contents consumed by Qdrant main/local_main scripts.
 engine_emit_runtime_env() {
     if [[ -z "${BASE_DIR:-}" ]]; then
@@ -289,6 +333,17 @@ engine_emit_runtime_env() {
     if [[ -n "${ARTIFACT_DIR:-}" ]]; then
         printf 'COLLECTION_DOCUMENT_SOURCE=%s\n' "${COLLECTION_DOCUMENT}"
         printf 'COLLECTION_DOCUMENT=%s\n' "collection_document.json"
+    fi
+
+    if [[ "${TASK^^}" == "STORM" ]]; then
+        local storm_index=0 storm_cfg staged_list=""
+        IFS=',' read -r -a _storm_cfgs <<< "$STORM_CONFIG"
+        for storm_cfg in "${_storm_cfgs[@]}"; do
+            staged_list+="${staged_list:+,}$(qdrant_storm_staged_name "$storm_index" "$storm_cfg")"
+            storm_index=$((storm_index + 1))
+        done
+        printf 'STORM_CONFIG_SOURCE=%s\n' "$STORM_CONFIG"
+        printf 'STORM_CONFIGS_STAGED=%s\n' "$staged_list"
     fi
 }
 
@@ -336,6 +391,21 @@ engine_copy_payload() {
 
     if [[ -n "$RESTORE_DIR" ]]; then
         copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "fix_peer_id.py" "collection_status.py"
+    fi
+
+    if [[ "${TASK^^}" == "STORM" ]]; then
+        # Freeze the binary and every storm config into the run dir, so a
+        # queued job cannot drift if the originals are edited (same rule as
+        # the shard-builder binary and collection document below).
+        cp "$NOVA_STORM_BIN" "$target_dir/nova-storm" || return 1
+        chmod +x "$target_dir/nova-storm"
+        copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "storm_aggregate.py"
+        local storm_index=0 storm_cfg
+        IFS=',' read -r -a _storm_cfgs <<< "$STORM_CONFIG"
+        for storm_cfg in "${_storm_cfgs[@]}"; do
+            cp "$storm_cfg" "$target_dir/$(qdrant_storm_staged_name "$storm_index" "$storm_cfg")" || return 1
+            storm_index=$((storm_index + 1))
+        done
     fi
 
     if [[ -n "${ARTIFACT_DIR:-}" ]]; then
