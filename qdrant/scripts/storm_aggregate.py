@@ -21,7 +21,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-METRICS = ["qps", "p50_ms", "p95_ms", "p99_ms", "max_ms", "requests", "errors"]
+METRICS = ["qps", "p50_ms", "p95_ms", "p99_ms", "max_ms", "requests", "errors", "timeouts"]
 REP = re.compile(r"^(?P<name>.+)_rep(?P<k>\d+)$")
 
 
@@ -38,7 +38,7 @@ def main() -> int:
         if not m:
             continue
         try:
-            groups[m.group("name")].append((int(m.group("k")), json.loads(path.read_text())))
+            groups[m.group("name")].append((int(m.group("k")), path.name, json.loads(path.read_text())))
         except json.JSONDecodeError:
             print(f"[storm-aggregate] skipping unparseable {path.name} (failed repeat?)", file=sys.stderr)
 
@@ -50,10 +50,21 @@ def main() -> int:
     unstable_recall = []
     for name, runs in sorted(groups.items()):
         runs.sort()
-        summaries = [s for _, s in runs]
+        summaries = [s for _, _, s in runs]
         row = {"config": name, "repeats": len(summaries)}
         for metric in METRICS:
-            values = [s[metric] for s in summaries if metric in s]
+            # A summary missing an expected metric is malformed output or a
+            # stale nova-storm binary — either invalidates the aggregation,
+            # so fail loudly instead of writing a summary.csv with holes.
+            missing = [fname for _, fname, s in runs if metric not in s]
+            if missing:
+                print(
+                    f"[storm-aggregate] ERROR: field '{metric}' missing from "
+                    f"{', '.join(missing)} — malformed summary or stale nova-storm binary",
+                    file=sys.stderr,
+                )
+                return 1
+            values = [s[metric] for s in summaries]
             row[f"{metric}_median"] = statistics.median(values)
             row[f"{metric}_min"] = min(values)
             row[f"{metric}_max"] = max(values)

@@ -210,6 +210,23 @@ run_nova_storm() {
             name="${wname}_k${wk}_b${wb}_c${wc}_fullrecall_rep1"
             echo "[storm] full-file recall pass: ${wname} k=${wk} b=${wb} c=${wc}"
             run_one_storm "$name" "$wcfg" "$wk" "$wb" "$wc" 1 1000000 || failed=1
+
+            # RAG-shaped pass: same winner, same full file, but every hit
+            # returns its document body (payload include-selector) -- payload
+            # reads from Lustre join the measurement. Compared against the
+            # fullrecall row, the delta IS the payload-retrieval cost.
+            if [[ "${STORM_RAG_PAYLOAD:-True}" == "True" ]]; then
+                local rag_fields
+                rag_fields="[$(echo "${STORM_RAG_FIELDS:-text}" | sed 's/[^,]\+/"&"/g')]"
+                name="${wname}_k${wk}_b${wb}_c${wc}_rag_rep1"
+                echo "[storm] RAG payload pass (${rag_fields}): ${wname} k=${wk} b=${wb} c=${wc}"
+                if NO_PROXY="" no_proxy="" http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" QDRANT_URL="$grpc_url" STORM_PASSES=1 QUERY_LIMIT=1000000 STORM_WITH_PAYLOAD="$rag_fields" STORM_TOP_K="$wk" STORM_BATCH_SIZE="$wb" STORM_CONCURRENCY="$wc" ./nova-storm --json "$wcfg" > "stormResults/${name}.json" 2> "stormResults/${name}.log"; then
+                    echo "[storm] $name: $(cat "stormResults/${name}.json")"
+                else
+                    echo "[storm] $name FAILED (exit $?) -- see stormResults/${name}.log" >&2
+                    failed=1
+                fi
+            fi
         done < ./runtime_state/storm_best.txt
 
         # Re-aggregate so the winner-phase rows join summary.csv.

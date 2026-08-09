@@ -35,6 +35,9 @@ def main() -> int:
                     float(row["p99_ms_median"]),
                     int(m.group("b")),
                     int(m.group("c")),
+                    # cells with client-side timeouts have corrupt qps AND
+                    # censored tails -- they must not win on those numbers
+                    float(row.get("timeouts_max", 0) or 0),
                 )
             )
 
@@ -43,12 +46,29 @@ def main() -> int:
         return 1
 
     for (name, k), rows in sorted(groups.items()):
-        rows.sort(reverse=True)
-        qps, p99, b, c = rows[0]
+        clean = [r for r in rows if r[4] == 0]
+        if not clean:
+            # every cell timed out at least once: pick the least-contaminated
+            # (fewest timeouts, then qps) and say so loudly
+            rows.sort(key=lambda r: (r[4], -r[0]))
+            qps, p99, b, c, t = rows[0]
+            print(
+                f"[pick-best] WARNING: {name} k={k}: EVERY cell had client timeouts; "
+                f"choosing least-contaminated b={b} c={c} ({t:.0f} timeouts, qps {qps:.0f} "
+                f"-- qps/p99 at this cell are unreliable; consider raising STORM_TIMEOUT_S)",
+                file=sys.stderr,
+            )
+            print(f"{name} {k} {b} {c}")
+            continue
+        skipped = len(rows) - len(clean)
+        clean.sort(reverse=True)
+        qps, p99, b, c, _ = clean[0]
         note = f"[pick-best] {name} k={k}: b={b} c={c} (qps {qps:.0f}, p99 {p99:.2f}ms)"
-        if len(rows) > 1:
-            q2, p2, b2, c2 = rows[1]
+        if len(clean) > 1:
+            q2, p2, b2, c2, _ = clean[1]
             note += f"; runner-up b={b2} c={c2} (qps {q2:.0f}, p99 {p2:.2f}ms)"
+        if skipped:
+            note += f"; {skipped} cell(s) excluded for client timeouts"
         print(note, file=sys.stderr)
         print(f"{name} {k} {b} {c}")
     return 0
