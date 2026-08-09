@@ -56,7 +56,15 @@ fi
 BUILD_ARGS=()
 if [ -n "$QDRANT_EXECUTABLE" ]; then
     BUILD_ARGS+=(--bind ./qdrant:/qdrant/qdrant)
-fi 
+fi
+
+# Server-side search timeout: unset keeps qdrant's built-in 60s default (an
+# empty env value would fail qdrant's Option<usize> config parse, so the
+# override is only passed when the variable has a value).
+TIMEOUT_ARGS=()
+if [ -n "${QDRANT_SEARCH_TIMEOUT_S:-}" ]; then
+    TIMEOUT_ARGS+=(--env QDRANT__STORAGE__PERFORMANCE__SEARCH_TIMEOUT_SEC=$QDRANT_SEARCH_TIMEOUT_S)
+fi
 
 if [ -n "$RESTORE_DIR" ]; then
     rm -fr ${TARGET_BASE}/data/node$RANK
@@ -84,6 +92,7 @@ apptainer exec \
     --env INSERT_TRACE=$INSERT_TRACE \
     --env QUERY_TRACE=$QUERY_TRACE \
     "${BUILD_ARGS[@]}" \
+    "${TIMEOUT_ARGS[@]}" \
     "${APPTAINER_ARGS[@]}" \
     "${GPU_ARGS[@]}" \
     qdrant.sif bash launch.sh $IP_ADDR $P2P_PORT $RANK > "rank${RANK}.out" 2>&1 &

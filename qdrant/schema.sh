@@ -33,6 +33,7 @@ register_qdrant_var "HNSW_EF_CONSTRUCTION" "default" "100" "" "HNSW efConstructi
 register_qdrant_var "MAX_SEGMENT_SIZE" "default" "" "" "Optional Qdrant max segment size in KB; only applied when set"
 register_qdrant_var "DEFAULT_SEGMENT_NUMBER" "default" "" "" "Optional Qdrant default segment count; only applied when set"
 register_qdrant_var "GPU_INDEX" "default" "False" "True False" "Whether to use GPU indexing"
+register_qdrant_var "QDRANT_SEARCH_TIMEOUT_S" "default" "" "" "Optional SERVER-side search timeout in seconds (QDRANT__STORAGE__PERFORMANCE__SEARCH_TIMEOUT_SEC); empty keeps qdrant's built-in 60s default. The server aborts searches at this bound with an Internal 'timed out after' error (nova-storm classifies it as a timeout; no client retry) -- keep it BELOW STORM_TIMEOUT_S so the server's bounded error wins over a client cancel"
 
 # Quantization
 register_qdrant_var "QUANTIZATION_TYPE" "default" "NONE" "NONE SCALAR BINARY PRODUCT TURBO" "Collection quantization method; TURBO requires Qdrant 1.18 or newer"
