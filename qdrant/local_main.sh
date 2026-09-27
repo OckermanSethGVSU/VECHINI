@@ -52,6 +52,9 @@ CONFIG_DIR="${QDRANT_LOCAL_CONFIG_DIR:-$RUN_DIR/.local/qdrant/config}"
 SNAPSHOT_DIR="${QDRANT_LOCAL_SNAPSHOT_DIR:-$RUN_DIR/.local/qdrant/snapshots}"
 export RUNTIME_STATE_DIR="${RUNTIME_STATE_DIR:-$RUN_DIR/runtime_state}"
 BATCH_CLIENT_BINARY_PATH="${BATCH_CLIENT_BINARY_PATH:-}"
+if [[ "${QUERY_PROFILING:-False}" == "True" && -z "$BATCH_CLIENT_BINARY_PATH" ]]; then
+    BATCH_CLIENT_BINARY_PATH="$RUN_DIR/batch_client"
+fi
 MIXED_BINARY_PATH="${MIXED_BINARY_PATH:-}"
 QUERY_DEBUG_RESULTS="${QUERY_DEBUG_RESULTS:-true}"
 LOCAL_RECREATE_COLLECTION="${LOCAL_RECREATE_COLLECTION:-true}"
@@ -130,6 +133,14 @@ ensure_binaries() {
 }
 
 start_qdrant() {
+    if [[ "${QUERY_PROFILING:-False}" == "True" ]] && \
+        "$CONTAINER_RUNTIME" ps -a --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then
+        if ! "$CONTAINER_RUNTIME" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER_NAME" | \
+            grep -Fxq 'QDRANT__SERVICE__QUERY_PROFILING=true'; then
+            echo "Existing Qdrant container '$CONTAINER_NAME' was created without query profiling. Use a new QDRANT_LOCAL_NAME or remove that container before running this profile configuration." >&2
+            return 1
+        fi
+    fi
     if "$CONTAINER_RUNTIME" ps --format '{{.Names}}' | grep -Fxq "$CONTAINER_NAME"; then
         echo "Qdrant container '$CONTAINER_NAME' is already running."
     else
@@ -138,6 +149,10 @@ start_qdrant() {
             "$CONTAINER_RUNTIME" start "$CONTAINER_NAME" >/dev/null
         else
             echo "Launching Qdrant container '$CONTAINER_NAME' from image '$IMAGE'..."
+            local profile_args=()
+            if [[ "${QUERY_PROFILING:-False}" == "True" ]]; then
+                profile_args+=(--env QDRANT__SERVICE__QUERY_PROFILING=true)
+            fi
             "$CONTAINER_RUNTIME" run -d \
                 --name "$CONTAINER_NAME" \
                 -p "${HTTP_PORT}:6333" \
@@ -146,6 +161,7 @@ start_qdrant() {
                 -v "${DATA_DIR}:/qdrant/storage" \
                 -v "${CONFIG_DIR}:/qdrant/config/local" \
                 -v "${SNAPSHOT_DIR}:/qdrant/snapshots" \
+                "${profile_args[@]}" \
                 "$IMAGE" >/dev/null
         fi
     fi
@@ -314,6 +330,14 @@ finalize_local_run() {
     local timing_files=()
     [[ -f ./index_time.txt ]] && timing_files+=(./index_time.txt)
     timing_files+=(./*_times.csv ./*_summary.csv)
+    timing_files+=(./query_profile_rank_*.jsonl)
+    if [[ "${QUERY_PROFILING:-False}" == "True" ]]; then
+        local profile_files=(./query_profile_rank_*.jsonl)
+        if (( ${#profile_files[@]} > 0 )); then
+            python3 ./query_profiles_to_sequence.py "${profile_files[@]}" || return 1
+        fi
+    fi
+    timing_files+=(./query_profile_sequence_rank_*.json)
     if (( ${#timing_files[@]} > 0 )); then
         mv "${timing_files[@]}" "$CLIENT_TIMING_DIR"/
     fi

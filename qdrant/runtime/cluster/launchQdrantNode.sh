@@ -66,6 +66,11 @@ if [ -n "${QDRANT_SEARCH_TIMEOUT_S:-}" ]; then
     TIMEOUT_ARGS+=(--env QDRANT__STORAGE__PERFORMANCE__SEARCH_TIMEOUT_SEC=$QDRANT_SEARCH_TIMEOUT_S)
 fi
 
+PROFILE_ARGS=()
+if [[ "${QUERY_PROFILING:-False}" == "True" ]]; then
+    PROFILE_ARGS+=(--env QDRANT__SERVICE__QUERY_PROFILING=true)
+fi
+
 if [ -n "$RESTORE_DIR" ]; then
     rm -fr ${TARGET_BASE}/data/node$RANK
     echo "Restoring from ${RESTORE_DIR} to ${TARGET_BASE}/data/"
@@ -93,6 +98,7 @@ apptainer exec \
     --env QUERY_TRACE=$QUERY_TRACE \
     "${BUILD_ARGS[@]}" \
     "${TIMEOUT_ARGS[@]}" \
+    "${PROFILE_ARGS[@]}" \
     "${APPTAINER_ARGS[@]}" \
     "${GPU_ARGS[@]}" \
     qdrant.sif bash launch.sh $IP_ADDR $P2P_PORT $RANK > "rank${RANK}.out" 2>&1 &

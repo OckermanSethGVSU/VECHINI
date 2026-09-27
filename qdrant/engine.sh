@@ -353,13 +353,19 @@ engine_copy_payload() {
 
     mkdir -p "$target_dir/rustSrc"
     qdrant_validate_perf_payload || return 1
-    copy_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state" || return 1
+    # A fresh checkout may have no runtime_state seed; the run still needs the directory.
+    mkdir -p "$target_dir/runtime_state"
+    if [[ -d "$ENGINE_DIR/runtime_state" ]]; then
+        cp -R "$ENGINE_DIR/runtime_state/." "$target_dir/runtime_state/" || return 1
+    fi
     if [[ "${CALCULATE_RECALL:-False}" == "True" ]]; then
         copy_engine_items "$ROOT_DIR/utils" "$target_dir" "compute_recall.py"
     fi
 
     if [[ "${RUN_MODE^^}" == "LOCAL" ]]; then
-        copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" "batch_client"
+        if [[ "${QUERY_PROFILING:-False}" != "True" ]]; then
+            copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" "batch_client"
+        fi
         copy_engine_items "$ENGINE_DIR/clients/batch_client/src" "$target_dir/rustSrc" "main.rs"
         if [[ "$TASK" == "MIXED" ]]; then
             copy_engine_items "$ENGINE_DIR/clients/mixed" "$target_dir" "mixed"
@@ -381,12 +387,24 @@ engine_copy_payload() {
 
         copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "profile.py" "gen_dirs.py" "mapping.py"
 
-        copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" "batch_client"
+        if [[ "${QUERY_PROFILING:-False}" != "True" ]]; then
+            copy_engine_items "$ENGINE_DIR/clients/batch_client" "$target_dir" "batch_client"
+        fi
         copy_engine_items "$ENGINE_DIR/clients/batch_client/src" "$target_dir/rustSrc" "main.rs"
         if [[ "$TASK" == "MIXED" ]]; then
             copy_engine_items "$ENGINE_DIR/clients/mixed" "$target_dir" "mixed"
             cp "$ENGINE_DIR/clients/mixed/src/main.rs" "$target_dir/rustSrc/mixed_main.rs"
         fi
+    fi
+
+    if [[ "${QUERY_PROFILING:-False}" == "True" ]]; then
+        local profiled_client="$ENGINE_DIR/clients/batch_client/target/release/batch_client"
+        if [[ ! -x "$profiled_client" ]]; then
+            echo "QUERY_PROFILING=True requires a release batch client. Build it with: (cd $ENGINE_DIR/clients/batch_client && cargo build --release)" >&2
+            return 1
+        fi
+        cp "$profiled_client" "$target_dir/batch_client" || return 1
+        copy_engine_items "$ENGINE_DIR/scripts" "$target_dir" "query_profiles_to_sequence.py"
     fi
 
     if [[ -n "$RESTORE_DIR" ]]; then

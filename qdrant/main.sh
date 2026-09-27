@@ -53,6 +53,14 @@ finalize_cluster_run() {
     local timing_files=()
     [[ -f ./index_time.txt ]] && timing_files+=(./index_time.txt)
     timing_files+=(./*_times.csv ./*_summary.csv)
+    timing_files+=(./query_profile_rank_*.jsonl)
+    if [[ "${QUERY_PROFILING:-False}" == "True" ]]; then
+        local profile_files=(./query_profile_rank_*.jsonl)
+        if (( ${#profile_files[@]} > 0 )); then
+            python3 ./query_profiles_to_sequence.py "${profile_files[@]}" || return 1
+        fi
+    fi
+    timing_files+=(./query_profile_sequence_rank_*.json)
     if (( ${#timing_files[@]} > 0 )); then
         mv "${timing_files[@]}" clientTiming/
     fi

@@ -98,3 +98,4 @@ register_qdrant_var "PERF" "default" "NONE" "NONE STAT RECORD" "Performance coll
 register_qdrant_var "PERF_EVENTS" "default" "topdown-be-bound,topdown-mem-bound,topdown-retiring,topdown-fe-bound,topdown-bad-spec" "" "Comma-separated perf stat events"
 register_qdrant_var "INSERT_TRACE" "default" "" "" "Optional insert trace file or mode"
 register_qdrant_var "QUERY_TRACE" "default" "" "" "Optional query trace file or mode"
+register_qdrant_var "QUERY_PROFILING" "default" "False" "True False" "Include forked Qdrant query stage profiles in responses and save them per client rank; requires a server built from HPC_Qdrant"

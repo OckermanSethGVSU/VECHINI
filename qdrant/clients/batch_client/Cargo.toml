@@ -8,6 +8,7 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 ndarray = "0.15"
 ndarray-npy = "0.8"
-qdrant-client = "1.16.0"
+qdrant-client = { path = "../vendor/qdrant-client", default-features = false, features = ["serde"] }
 csv = "1.4.0"
 chrono = "0.4.42"
+serde_json = "1"

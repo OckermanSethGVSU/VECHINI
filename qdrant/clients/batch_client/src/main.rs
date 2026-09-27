@@ -6,12 +6,13 @@ use ndarray_npy::{read_npy, write_npy};
 use qdrant_client::qdrant::{
     point_id::PointIdOptions, CountPointsBuilder, GetPointsBuilder, PointId, PointStruct, Query,
     QuantizationSearchParamsBuilder, QueryBatchPointsBuilder, QueryPoints, QueryPointsBuilder,
-    ScoredPoint, SearchParamsBuilder, UpsertPointsBuilder,
+    QueryProfile, ScoredPoint, SearchParamsBuilder, SegmentProfile, StageTiming,
+    UpsertPointsBuilder, Usage,
 };
-use qdrant_client::{Payload, Qdrant};
+use qdrant_client::{ClientTiming, Payload, Qdrant};
 use std::env;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 use std::{mem, str};
 use std::time::Instant;
@@ -58,6 +59,7 @@ struct RunConfig {
     npy_path: String,
     streaming_reads: bool,
     debug_results: bool,
+    query_profiling: bool,
     ef_search: u64,
     top_k: usize,
     // None means "do not set QuantizationSearchParams at all" -- i.e. the historical
@@ -357,6 +359,8 @@ fn load_config() -> anyhow::Result<RunConfig> {
 
     let debug_results = matches!(active_task, ActiveTask::Query)
         && parse_optional_bool(&["QUERY_DEBUG_RESULTS"]);
+    let query_profiling = matches!(active_task, ActiveTask::Query)
+        && parse_optional_bool(&["QUERY_PROFILING"]);
     let streaming_reads = match active_task {
         ActiveTask::Upload => parse_optional_bool(&["INSERT_STREAMING", "STREAMING"]),
         ActiveTask::Query => parse_optional_bool(&["QUERY_STREAMING", "STREAMING"]),
@@ -390,6 +394,7 @@ fn load_config() -> anyhow::Result<RunConfig> {
         npy_path,
         streaming_reads,
         debug_results,
+        query_profiling,
         ef_search,
         top_k,
         quantization_rescore,
@@ -632,6 +637,113 @@ fn write_query_result_row(
     }
 }
 
+fn stage_json(stage: &StageTiming) -> serde_json::Value {
+    serde_json::json!({
+        "name": stage.name,
+        "duration_us": stage.duration_us,
+        "start_us": stage.start_us,
+        "segment": stage.segment,
+        "chunk": stage.chunk,
+    })
+}
+
+fn segment_json(segment: &SegmentProfile) -> serde_json::Value {
+    serde_json::json!({
+        "segment": segment.segment,
+        "chunk": segment.chunk,
+        "kind": segment.kind,
+        "points": segment.points,
+        "search_path": segment.search_path,
+        "top": segment.top,
+        "sampled_top": segment.sampled_top,
+        "queued_ahead": segment.queued_ahead,
+        "running": segment.running,
+        "queued_ahead_same_search": segment.queued_ahead_same_search,
+    })
+}
+
+fn profile_json(profile: &QueryProfile) -> serde_json::Value {
+    serde_json::json!({
+        "stages": profile.stages.iter().map(stage_json).collect::<Vec<_>>(),
+        "segments": profile.segments.iter().map(segment_json).collect::<Vec<_>>(),
+        "shards": profile.shards.iter().map(|shard| serde_json::json!({
+            "shard_id": shard.shard_id,
+            "peer_id": shard.peer_id,
+            "local": shard.local,
+            "total_us": shard.total_us,
+            "phase": shard.phase,
+            "client_us": shard.client_us,
+            "legs": shard.legs.as_ref().map(|legs| serde_json::json!({
+                "request_us": legs.request_us,
+                "response_us": legs.response_us,
+                "skew_us": legs.skew_us,
+                "reliable": legs.reliable,
+            })),
+            "start_us": shard.start_us,
+            "exec_us": shard.exec_us,
+            "stages": shard.stages.iter().map(stage_json).collect::<Vec<_>>(),
+            "segments": shard.segments.iter().map(segment_json).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+        "handler_entry_us": profile.handler_entry_us,
+        "handler_exit_us": profile.handler_exit_us,
+    })
+}
+
+fn open_query_profile(rank: usize, enabled: bool) -> anyhow::Result<Option<BufWriter<File>>> {
+    if enabled {
+        let path = format!("query_profile_rank_{rank}.jsonl");
+        Ok(Some(BufWriter::new(File::create(&path)
+            .with_context(|| format!("failed to create {path}"))?)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn save_query_profile(
+    output: &mut Option<BufWriter<File>>,
+    usage: Option<&Usage>,
+    client_timing: Option<&ClientTiming>,
+    rank: usize,
+    first_row: usize,
+    rows: usize,
+    server_time_s: f64,
+) -> anyhow::Result<()> {
+    let Some(output) = output.as_mut() else { return Ok(()); };
+    let profile = usage.and_then(|usage| usage.profile.as_ref())
+        .context("QUERY_PROFILING=True but the Qdrant response has no usage.profile; use the profiled server build and enable profiling on every node")?;
+    let client_timing = client_timing.context("profiled client call returned no client timing")?;
+    let record = serde_json::json!({
+        "rank": rank,
+        "first_query_row": first_row,
+        "query_count": rows,
+        "server_time_s": server_time_s,
+        "client_timing": {
+            "sent_unix_us": client_timing.sent_unix_us,
+            "recv_unix_us": client_timing.recv_unix_us,
+            "rtt_us": client_timing.rtt_us,
+            "call_us": client_timing.call_us,
+            "attempts": client_timing.attempts,
+            "request_bytes": client_timing.request_bytes,
+            "response_bytes": client_timing.response_bytes,
+            "request_encode_us": client_timing.request_encode_us,
+            "response_decode_us": client_timing.response_decode_us,
+            "profile_bytes": client_timing.profile_bytes,
+            "profile_decode_us": client_timing.profile_decode_us,
+            "legs": client_timing.legs.map(|legs| serde_json::json!({
+                "request_us": legs.request_us,
+                "handler_us": legs.handler_us,
+                "response_us": legs.response_us,
+                "skew_us": legs.skew_us,
+                "reliable": legs.reliable,
+            })),
+        },
+        "profile": profile_json(profile),
+    });
+    serde_json::to_writer(&mut *output, &record)?;
+    output.write_all(b"\n")?;
+    Ok(())
+}
+
 type QueryResultChunk = Option<(usize, Array2<i64>)>;
 
 fn merge_query_result_chunks(
@@ -791,6 +903,7 @@ async fn worker(
                         config.batch_size,
                         config.top_k,
                         config.debug_results,
+                        config.query_profiling,
                         config.ef_search,
                         config.quantization_rescore,
                         barrier,
@@ -835,6 +948,7 @@ async fn worker(
                         config.batch_size,
                         config.top_k,
                         config.debug_results,
+                        config.query_profiling,
                         config.ef_search,
                         config.quantization_rescore,
                         barrier,
@@ -1095,6 +1209,7 @@ async fn run_query(
     batch_size: usize,
     top_k: usize,
     debug_results: bool,
+    query_profiling: bool,
     ef_search: u64,
     quantization_rescore: Option<bool>,
     barrier: Arc<Barrier>,
@@ -1110,6 +1225,7 @@ async fn run_query(
     let mut elapsed_op_times = Vec::new();
     let mut printed_debug_results = false;
     let mut query_result_ids = Array2::from_elem((view.dim().0, top_k), -1_i64);
+    let mut profile_output = open_query_profile(rank, query_profiling)?;
     let search_params = build_search_params(ef_search, quantization_rescore);
 
     let mark_workflow = should_mark_workflow(task);
@@ -1135,8 +1251,15 @@ async fn run_query(
                 .params(search_params.clone())
                 .limit(top_k as u64);
             let start_query = Instant::now();
-            let response = client.query(query).await?;
+            let (response, client_timing) = if query_profiling {
+                let (response, timing) = client.query_profiled(query).await?;
+                (response, Some(timing))
+            } else {
+                (client.query(query).await?, None)
+            };
             let end_query = Instant::now();
+            save_query_profile(&mut profile_output, response.usage.as_ref(), client_timing.as_ref(), rank,
+                start_slice + batch_idx, 1, response.time)?;
 
             write_query_result_row(&mut query_result_ids, batch_idx, &response.result, top_k);
 
@@ -1154,9 +1277,12 @@ async fn run_query(
                 printed_debug_results = true;
             }
 
-            elapsed_process_times.push(start_query.duration_since(start_batch).as_secs_f64());
-            elapsed_query_times.push(end_query.duration_since(start_query).as_secs_f64());
-            elapsed_op_times.push(end_query.duration_since(start_batch).as_secs_f64());
+            let process_s = start_query.duration_since(start_batch).as_secs_f64();
+            let query_s = client_timing.as_ref().map(|t| t.call_us as f64 / 1_000_000.0)
+                .unwrap_or_else(|| end_query.duration_since(start_query).as_secs_f64());
+            elapsed_process_times.push(process_s);
+            elapsed_query_times.push(query_s);
+            elapsed_op_times.push(process_s + query_s);
         } else {
             let queries: Vec<QueryPoints> = chunk
                 .outer_iter()
@@ -1173,8 +1299,15 @@ async fn run_query(
                 .timeout(999)
                 .build();
             let start_query = Instant::now();
-            let response = client.query_batch(batch_query).await?;
+            let (response, client_timing) = if query_profiling {
+                let (response, timing) = client.query_batch_profiled(batch_query).await?;
+                (response, Some(timing))
+            } else {
+                (client.query_batch(batch_query).await?, None)
+            };
             let end_query = Instant::now();
+            save_query_profile(&mut profile_output, response.usage.as_ref(), client_timing.as_ref(), rank,
+                start_slice + batch_idx * batch_size, chunk.dim().0, response.time)?;
 
             for (local_idx, batch_result) in response.result.iter().enumerate() {
                 write_query_result_row(
@@ -1205,9 +1338,12 @@ async fn run_query(
                 printed_debug_results = true;
             }
 
-            elapsed_process_times.push(start_query.duration_since(start_batch).as_secs_f64());
-            elapsed_query_times.push(end_query.duration_since(start_query).as_secs_f64());
-            elapsed_op_times.push(end_query.duration_since(start_batch).as_secs_f64());
+            let process_s = start_query.duration_since(start_batch).as_secs_f64();
+            let query_s = client_timing.as_ref().map(|t| t.call_us as f64 / 1_000_000.0)
+                .unwrap_or_else(|| end_query.duration_since(start_query).as_secs_f64());
+            elapsed_process_times.push(process_s);
+            elapsed_query_times.push(query_s);
+            elapsed_op_times.push(process_s + query_s);
         }
 
         batch_idx += 1;
@@ -1258,6 +1394,9 @@ async fn run_query(
         &Array1::from(elapsed_op_times),
     )?;
 
+    if let Some(output) = profile_output.as_mut() {
+        output.flush()?;
+    }
     Ok(Some((start_slice, query_result_ids)))
 }
 
@@ -1426,6 +1565,7 @@ async fn run_query_streaming(
     batch_size: usize,
     top_k: usize,
     debug_results: bool,
+    query_profiling: bool,
     ef_search: u64,
     quantization_rescore: Option<bool>,
     barrier: Arc<Barrier>,
@@ -1443,6 +1583,7 @@ async fn run_query_streaming(
     let mut elapsed_op_times = Vec::new();
     let mut printed_debug_results = false;
     let mut query_result_ids = Array2::from_elem((end_slice - start_slice, top_k), -1_i64);
+    let mut profile_output = open_query_profile(rank, query_profiling)?;
     let search_params = build_search_params(ef_search, quantization_rescore);
 
     let mark_workflow = should_mark_workflow(task);
@@ -1472,8 +1613,15 @@ async fn run_query_streaming(
                 .params(search_params.clone())
                 .limit(top_k as u64);
             let start_query = Instant::now();
-            let response = client.query(query).await?;
+            let (response, client_timing) = if query_profiling {
+                let (response, timing) = client.query_profiled(query).await?;
+                (response, Some(timing))
+            } else {
+                (client.query(query).await?, None)
+            };
             let end_query = Instant::now();
+            save_query_profile(&mut profile_output, response.usage.as_ref(), client_timing.as_ref(), rank,
+                batch_start, 1, response.time)?;
 
             write_query_result_row(
                 &mut query_result_ids,
@@ -1496,9 +1644,12 @@ async fn run_query_streaming(
                 printed_debug_results = true;
             }
 
-            elapsed_process_times.push(start_query.duration_since(start_batch).as_secs_f64());
-            elapsed_query_times.push(end_query.duration_since(start_query).as_secs_f64());
-            elapsed_op_times.push(end_query.duration_since(start_batch).as_secs_f64());
+            let process_s = start_query.duration_since(start_batch).as_secs_f64();
+            let query_s = client_timing.as_ref().map(|t| t.call_us as f64 / 1_000_000.0)
+                .unwrap_or_else(|| end_query.duration_since(start_query).as_secs_f64());
+            elapsed_process_times.push(process_s);
+            elapsed_query_times.push(query_s);
+            elapsed_op_times.push(process_s + query_s);
         } else {
             // Build a batch query request from the streamed rows exactly as the eager path does.
             let queries: Vec<QueryPoints> = batch_data
@@ -1516,8 +1667,15 @@ async fn run_query_streaming(
                 .timeout(999)
                 .build();
             let start_query = Instant::now();
-            let response = client.query_batch(batch_query).await?;
+            let (response, client_timing) = if query_profiling {
+                let (response, timing) = client.query_batch_profiled(batch_query).await?;
+                (response, Some(timing))
+            } else {
+                (client.query_batch(batch_query).await?, None)
+            };
             let end_query = Instant::now();
+            save_query_profile(&mut profile_output, response.usage.as_ref(), client_timing.as_ref(), rank,
+                batch_start, rows_in_batch, response.time)?;
 
             for (local_idx, batch_result) in response.result.iter().enumerate() {
                 write_query_result_row(
@@ -1548,9 +1706,12 @@ async fn run_query_streaming(
                 printed_debug_results = true;
             }
 
-            elapsed_process_times.push(start_query.duration_since(start_batch).as_secs_f64());
-            elapsed_query_times.push(end_query.duration_since(start_query).as_secs_f64());
-            elapsed_op_times.push(end_query.duration_since(start_batch).as_secs_f64());
+            let process_s = start_query.duration_since(start_batch).as_secs_f64();
+            let query_s = client_timing.as_ref().map(|t| t.call_us as f64 / 1_000_000.0)
+                .unwrap_or_else(|| end_query.duration_since(start_query).as_secs_f64());
+            elapsed_process_times.push(process_s);
+            elapsed_query_times.push(query_s);
+            elapsed_op_times.push(process_s + query_s);
         }
 
         batch_start += rows_in_batch;
@@ -1601,6 +1762,9 @@ async fn run_query_streaming(
         &Array1::from(elapsed_op_times),
     )?;
 
+    if let Some(output) = profile_output.as_mut() {
+        output.flush()?;
+    }
     Ok(Some((start_slice, query_result_ids)))
 }
 
@@ -1667,6 +1831,88 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn query_profile_record_preserves_request_range_and_stages() {
+        let path = unique_test_path("query_profile");
+        let file = File::create(&path).expect("create profile file");
+        let mut output = Some(BufWriter::new(file));
+        let usage = Usage {
+            profile: Some(QueryProfile {
+                stages: vec![StageTiming {
+                    name: "coordinator".into(),
+                    duration_us: 123,
+                    start_us: 4,
+                    segment: Some(3),
+                    chunk: Some(1),
+                }],
+                segments: vec![SegmentProfile {
+                    segment: 3,
+                    chunk: Some(1),
+                    kind: "indexed".into(),
+                    points: 500,
+                    search_path: Some("unfiltered_hnsw".into()),
+                    top: 10,
+                    sampled_top: Some(8),
+                    queued_ahead: 2,
+                    running: 4,
+                    queued_ahead_same_search: 1,
+                }],
+                shards: vec![qdrant_client::qdrant::ShardProfile {
+                    phase: "retrieve".into(),
+                    segments: vec![SegmentProfile {
+                        segment: 7,
+                        kind: "plain".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let timing = ClientTiming {
+            sent_unix_us: 100,
+            recv_unix_us: 200,
+            rtt_us: 100,
+            call_us: 110,
+            attempts: 1,
+            request_bytes: 64,
+            response_bytes: 128,
+            request_encode_us: 3,
+            response_decode_us: 5,
+            profile_bytes: 44,
+            profile_decode_us: 2,
+            legs: Some(qdrant_client::ClientLegs {
+                request_us: 20,
+                handler_us: 60,
+                response_us: 20,
+                skew_us: 0,
+                reliable: true,
+            }),
+        };
+        save_query_profile(&mut output, Some(&usage), Some(&timing), 2, 40, 8, 0.002)
+            .expect("write profile");
+        drop(output);
+
+        let line = fs::read_to_string(&path).expect("read profile");
+        let record: serde_json::Value = serde_json::from_str(&line).expect("JSONL record");
+        assert_eq!(record["rank"], 2);
+        assert_eq!(record["first_query_row"], 40);
+        assert_eq!(record["query_count"], 8);
+        assert_eq!(record["profile"]["stages"][0]["duration_us"], 123);
+        assert_eq!(record["profile"]["stages"][0]["chunk"], 1);
+        assert_eq!(record["profile"]["segments"][0]["queued_ahead_same_search"], 1);
+        assert_eq!(record["profile"]["shards"][0]["segments"][0]["kind"], "plain");
+        assert_eq!(record["profile"]["shards"][0]["phase"], "retrieve");
+        assert_eq!(record["client_timing"]["legs"]["handler_us"], 60);
+        assert_eq!(record["client_timing"]["response_bytes"], 128);
+        assert_eq!(record["client_timing"]["profile_bytes"], 44);
+        assert_eq!(record["client_timing"]["profile_decode_us"], 2);
+        assert!(save_query_profile(&mut Some(BufWriter::new(File::create(&path).unwrap())),
+            None, Some(&timing), 2, 40, 8, 0.002).is_err());
+        cleanup_file(&path);
+    }
 
     fn unique_test_path(name: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -1804,21 +2050,24 @@ mod tests {
     fn validate_corpus_size_rejects_requests_larger_than_file() {
         let config = RunConfig {
             active_task: ActiveTask::Upload,
+            collection_name: "test".to_string(),
             n_workers: 1,
             total_clients: 1,
             explicit_total_clients: false,
             clients_per_worker: 1,
-            corpus_size: 11,
+            corpus_size: Some(11),
             batch_size: 1,
             balance_strategy: "NO_BALANCE".to_string(),
             npy_path: "unused.npy".to_string(),
             streaming_reads: false,
             debug_results: false,
+            query_profiling: false,
             ef_search: 64,
             top_k: 10,
+            quantization_rescore: None,
         };
 
-        let err = validate_corpus_size(&config, 10).expect_err("oversized corpus should fail");
+        let err = resolve_corpus_size(&config, 10).expect_err("oversized corpus should fail");
         assert!(err.to_string().contains("exceeds npy row count 10"));
     }
 
