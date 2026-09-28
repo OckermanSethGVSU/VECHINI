@@ -144,9 +144,36 @@ weaviate_validate_perf_payload() {
 }
 
 # Validate a loaded combo after sweep expansion.
+weaviate_executable_path() {
+    if [[ "$WEAVIATE_EXECUTABLE" == /* ]]; then
+        printf '%s\n' "$WEAVIATE_EXECUTABLE"
+    else
+        printf '%s\n' "$ENGINE_DIR/weaviateBuilds/$WEAVIATE_EXECUTABLE"
+    fi
+}
+
 engine_validate_combo() {
     schema_validate_current_values "$ENGINE_SCHEMA_PREFIX" || return 1
     schema_validate_recall_config || return 1
+    if [[ -n "${WEAVIATE_EXECUTABLE:-}" ]]; then
+        local executable
+        executable="$(weaviate_executable_path)"
+        if [[ ! -f "$executable" || ! -x "$executable" ]]; then
+            echo "WEAVIATE_EXECUTABLE must be an executable file: $executable" >&2
+            return 1
+        fi
+    fi
+    if [[ "${EXPERIMENTAL_OTEL_ENABLED:-false}" == "true" && "${EXPERIMENTAL_OTEL_EXPORTER_OTLP_PROTOCOL}" == "file" ]]; then
+        if [[ -z "$EXPERIMENTAL_OTEL_EXPORTER_FILE" ]]; then
+            echo "File tracing requires EXPERIMENTAL_OTEL_EXPORTER_FILE." >&2
+            return 1
+        fi
+        if [[ "${RUN_MODE^^}" == "PBS" ]] && (( NODES * WORKERS_PER_NODE > 1 )) &&
+            [[ "$EXPERIMENTAL_OTEL_EXPORTER_FILE" != *'{rank}'* ]]; then
+            echo "Multi-worker trace filenames must contain {rank} to avoid concurrent writers." >&2
+            return 1
+        fi
+    fi
     weaviate_validate_perf_payload
 }
 
@@ -186,7 +213,13 @@ engine_copy_payload() {
     local mixed_client_src_dir="$ENGINE_DIR/clients/mixed"
 
     weaviate_validate_perf_payload || return 1
-    copy_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state" || return 1
+    copy_optional_engine_items "$ENGINE_DIR" "$target_dir" "runtime_state" || return 1
+    mkdir -p "$target_dir/runtime_state" || return 1
+    copy_engine_items "$ENGINE_DIR/weaviateSetup" "$target_dir" "tracing_env.sh" || return 1
+    if [[ -n "${WEAVIATE_EXECUTABLE:-}" ]]; then
+        cp "$(weaviate_executable_path)" "$target_dir/weaviate" || return 1
+        chmod +x "$target_dir/weaviate" || return 1
+    fi
     if [[ "${CALCULATE_RECALL:-False}" == "True" ]]; then
         copy_engine_items "$ROOT_DIR/utils" "$target_dir" "compute_recall.py"
     fi
