@@ -45,6 +45,14 @@ fi
 "$@" &
 WEAVIATE_PID=$!
 
+# Log the selected variables from the child itself, after Apptainer has set
+# its environment. This confirms the queue size that the SDK will read.
+if [ -r "/proc/$WEAVIATE_PID/environ" ]; then
+    tr '\000' '\n' < "/proc/$WEAVIATE_PID/environ" |
+        grep -E '^(OTEL_BSP_MAX_QUEUE_SIZE|EXPERIMENTAL_OTEL_(ENABLED|EXPORTER_OTLP_PROTOCOL|EXPORTER_FILE|TRACES_SAMPLER_ARG|BSP_EXPORT_TIMEOUT|BSP_MAX_EXPORT_BATCH_SIZE))=' |
+        sed 's/^/[WEAVIATE ENV] /' || true
+fi
+
 if perf_enabled; then
     while [ ! -e "$RUNTIME_STATE_DIR/workflow_start.txt" ]; do
         if ! kill -0 "$WEAVIATE_PID" 2>/dev/null; then
@@ -89,4 +97,20 @@ if perf_enabled; then
     fi
 fi
 
+# The client job creates this marker after its final summary. Keep the server
+# alive until then, then request a graceful shutdown and wait for trace export.
+if ! perf_enabled; then
+    while [ ! -e "$RUNTIME_STATE_DIR/workflow_end.txt" ]; do
+        if ! kill -0 "$WEAVIATE_PID" 2>/dev/null; then
+            wait "$WEAVIATE_PID"
+            exit $?
+        fi
+        sleep 0.1
+    done
+fi
+
+if kill -0 "$WEAVIATE_PID" 2>/dev/null; then
+    echo "Rank ${PERF_RANK} requesting graceful Weaviate shutdown" >&2
+    kill -TERM "$WEAVIATE_PID" 2>/dev/null || true
+fi
 wait "$WEAVIATE_PID"

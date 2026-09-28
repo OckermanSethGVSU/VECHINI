@@ -203,3 +203,11 @@ fi
 
 run_summary INSERT insert
 calculate_recall_if_enabled
+
+# The marker is visible inside every container at /runtime_state. Each wrapper
+# then signals its Weaviate child and waits for OpenTelemetry to drain.
+touch ./runtime_state/workflow_end.txt
+if ! wait "$MPI_PID"; then
+    echo "One or more Weaviate servers failed during graceful shutdown" >&2
+    exit 1
+fi
