@@ -31,6 +31,20 @@ DATA_DIR="${WEAVIATE_LOCAL_DATA_DIR:-$PWD/.local/weaviate/data}"
 MODULES_DIR="${WEAVIATE_LOCAL_MODULES_DIR:-$PWD/.local/weaviate/modules}"
 
 mkdir -p "$DATA_DIR" "$MODULES_DIR"
+source ./tracing_env.sh
+SERVER_ARGS=("${WEAVIATE_TRACE_ARGS[@]}")
+SERVER_CMD=()
+if [[ -n "$WEAVIATE_TRACE_HOST_DIR" ]]; then
+    SERVER_ARGS+=(-v "$WEAVIATE_TRACE_HOST_DIR:/weaviate-traces")
+fi
+if [[ -n "${WEAVIATE_EXECUTABLE:-}" ]]; then
+    if [[ ! -x ./weaviate ]]; then
+        echo "Staged Weaviate executable missing or not executable: $PWD/weaviate" >&2
+        exit 1
+    fi
+    SERVER_ARGS+=(-v "$PWD/weaviate:/weaviate-custom:ro" --entrypoint /weaviate-custom)
+    SERVER_CMD=(--host 0.0.0.0 --port 8080 --scheme http)
+fi
 
 if "$CONTAINER_RUNTIME" ps --format '{{.Names}}' | grep -Fxq "$WEAVIATE_LOCAL_NAME"; then
     echo "Stopping existing Weaviate container '$WEAVIATE_LOCAL_NAME'..."
@@ -44,6 +58,7 @@ fi
 
 echo "Launching Weaviate container '$WEAVIATE_LOCAL_NAME' from '$WEAVIATE_LOCAL_IMAGE'..."
 "$CONTAINER_RUNTIME" run -d \
+    "${SERVER_ARGS[@]}" \
     --name "$WEAVIATE_LOCAL_NAME" \
     -p "${HTTP_PORT}:8080" \
     -p "${GO_PROFILING_PORT}:${GO_PROFILING_PORT}" \
@@ -66,7 +81,7 @@ echo "Launching Weaviate container '$WEAVIATE_LOCAL_NAME' from '$WEAVIATE_LOCAL_
     -e QUERY_DEFAULTS_LIMIT=20 \
     -e GRPC_PORT=50051 \
     -e GO_PROFILING_PORT="${GO_PROFILING_PORT}" \
-    "$WEAVIATE_LOCAL_IMAGE" >/dev/null
+    "$WEAVIATE_LOCAL_IMAGE" "${SERVER_CMD[@]}" >/dev/null
 
 cat > ip_registry.txt <<EOF
 ${RANK},${NODE_NAME},${WEAVIATE_LOCAL_HOST},${HTTP_PORT},${GRPC_PORT},${CLUSTER_GOSSIP_BIND_PORT},${CLUSTER_DATA_BIND_PORT},${RAFT_PORT},${RAFT_INTERNAL_RPC_PORT}

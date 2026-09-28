@@ -109,6 +109,20 @@ fi
 # Storage selection
 # ------------------------------------------------------------
 APPTAINER_ARGS=()
+source ./tracing_env.sh || exit 1
+APPTAINER_ARGS+=("${WEAVIATE_TRACE_ARGS[@]}")
+if [[ -n "$WEAVIATE_TRACE_HOST_DIR" ]]; then
+    APPTAINER_ARGS+=(-B "$WEAVIATE_TRACE_HOST_DIR:/weaviate-traces")
+fi
+WEAVIATE_SERVER=weaviate
+if [[ -n "${WEAVIATE_EXECUTABLE:-}" ]]; then
+    if [[ ! -x ./weaviate ]]; then
+        echo "Staged Weaviate executable missing or not executable: $PWD/weaviate" >&2
+        exit 1
+    fi
+    APPTAINER_ARGS+=(-B "$PWD/weaviate:/weaviate-custom:ro")
+    WEAVIATE_SERVER=/weaviate-custom
+fi
 
 if [[ "$STORAGE_MEDIUM" == "memory" ]]; then
     TARGET_BASE="/dev/shm/WeaviateDir"
@@ -211,7 +225,7 @@ if [[ -n "${MINIMUM_INTERNAL_TIMEOUT:-}" ]]; then
 fi
 
 WEAVIATE_CMD=(
-    weaviate
+    "$WEAVIATE_SERVER"
     --host ${IP_ADDR}
     --port "${HTTP_PORT}"
     --scheme http
