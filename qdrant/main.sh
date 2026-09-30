@@ -2,16 +2,23 @@
 summarize_standard_run() {
     local task_name="$1"
     local npy_dir="$2"
+    local times_csv="./${task_name,,}_times.csv"
     [[ -d "$npy_dir" ]] || return 0
     shopt -s nullglob
     local npy_files=("$npy_dir"/*.npy)
     shopt -u nullglob
     (( ${#npy_files[@]} > 0 )) || return 0
     mkdir -p clientTiming
-    ACTIVE_TASK="$task_name" python3 summarize_client_timings.py \
+    if [[ ! -f "$times_csv" && -f "clientTiming/${task_name,,}_times.csv" ]]; then
+        times_csv="clientTiming/${task_name,,}_times.csv"
+    fi
+    if ! ACTIVE_TASK="$task_name" python3 summarize_client_timings.py \
         --npy-dir "$npy_dir" \
         --output-dir clientTiming \
-        --times-csv "./${task_name,,}_times.csv"
+        --times-csv "$times_csv"; then
+        echo "Failed to summarize $task_name client timings." >&2
+        exit 1
+    fi
 }
 
 move_standard_npy_files() {
@@ -350,6 +357,11 @@ if [[ -n "${ENV_PATH:-}" ]]; then
     source "$ENV_PATH/bin/activate"
 else
     echo "ENV_PATH not set; using current Python environment: $(command -v python3)"
+fi
+
+if ! python3 -c 'import sys, numpy, qdrant_client; assert sys.version_info >= (3, 10), "Python 3.10 or newer is required"'; then
+    echo "Qdrant Python environment is unusable: ${ENV_PATH:-system Python}. Check python3, numpy, and qdrant_client before submitting." >&2
+    exit 1
 fi
 
 if [[ "$STORAGE_MEDIUM" == "DAOS" ]]; then

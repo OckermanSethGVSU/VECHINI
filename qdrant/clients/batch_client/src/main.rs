@@ -403,7 +403,7 @@ fn resolve_qdrant_url(
     // Choose the target registry entry based on the requested balancing strategy.
     let target = match balance_strategy {
         "NO_BALANCE" => 0,
-        "WORKER_BALANCE" => target,
+        "WORKER_BALANCE" | "CUSTOM_SHARDING" => target,
         _ => bail!("unknown balance strategy: {balance_strategy}"),
     };
 
@@ -736,6 +736,9 @@ async fn worker(
     let target_worker = worker_for_rank(rank, config.n_workers, config.clients_per_worker)?;
     let (target, qdrant_url) =
         resolve_qdrant_url(target_worker, &config.balance_strategy)?;
+    let shard_key = (config.active_task == ActiveTask::Upload
+        && config.balance_strategy == "CUSTOM_SHARDING")
+        .then(|| format!("worker_{target_worker}"));
     let (n_rows_total, _dim) = input_data.dims();
     let (start_slice, end_slice) = if config.explicit_total_clients {
         range_for_rank_total_clients(rank, config.total_clients, n_rows_total)
@@ -774,6 +777,7 @@ async fn worker(
                         start_slice,
                         n_rows_total,
                         config.batch_size,
+                        shard_key.as_deref(),
                         barrier,
                         lock,
                         config.active_task,
@@ -816,6 +820,7 @@ async fn worker(
                         end_slice,
                         n_rows_total,
                         config.batch_size,
+                        shard_key.as_deref(),
                         barrier,
                         lock,
                         config.active_task,
@@ -890,6 +895,7 @@ async fn run_upload(
     offset: usize,
     n_rows_total: usize,
     batch_size: usize,
+    shard_key: Option<&str>,
     barrier: Arc<Barrier>,
     lock: Arc<Mutex<()>>,
     task: ActiveTask,
@@ -927,7 +933,10 @@ async fn run_upload(
             })
             .collect();
 
-        let batch = UpsertPointsBuilder::new(collection_name, points).wait(false);
+        let mut batch = UpsertPointsBuilder::new(collection_name, points).wait(false);
+        if let Some(key) = shard_key {
+            batch = batch.shard_key_selector(key.to_string());
+        }
         let start_upload = Instant::now();
         client.upsert_points(batch).await?;
         let end_upload = Instant::now();
@@ -1271,6 +1280,7 @@ async fn run_upload_streaming(
     end_slice: usize,
     n_rows_total: usize,
     batch_size: usize,
+    shard_key: Option<&str>,
     barrier: Arc<Barrier>,
     lock: Arc<Mutex<()>>,
     task: ActiveTask,
@@ -1313,7 +1323,10 @@ async fn run_upload_streaming(
             })
             .collect();
 
-        let batch = UpsertPointsBuilder::new(collection_name, points).wait(false);
+        let mut batch = UpsertPointsBuilder::new(collection_name, points).wait(false);
+        if let Some(key) = shard_key {
+            batch = batch.shard_key_selector(key.to_string());
+        }
         let start_upload = Instant::now();
         client.upsert_points(batch).await?;
         let end_upload = Instant::now();

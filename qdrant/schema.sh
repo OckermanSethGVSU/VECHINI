@@ -16,6 +16,9 @@
 # Worker/shard layout
 register_qdrant_var "WORKERS_PER_NODE" "default" "1" "" "Worker processes launched per compute node"
 register_qdrant_var "REBALANCE_TOPOLOGY" "default" "False" "True False" "Whether configure_collection should actively move shards to the target topology"
+# The shared balance strategy choices also serve Milvus and Weaviate; extend only Qdrant's registry.
+QDRANT_CHOICES[INSERT_BALANCE_STRATEGY]="NO_BALANCE WORKER_BALANCE CUSTOM_SHARDING"
+QDRANT_DESC[INSERT_BALANCE_STRATEGY]="Insert balancing policy; CUSTOM_SHARDING routes each client's partition to its worker shard key"
 
 # Engine/runtime selection
 register_qdrant_var "QDRANT_VERSION" "default" "" "" "Optional Qdrant version, for example 1.16.1; derives the PBS SIF filename and local image when explicit overrides are empty"

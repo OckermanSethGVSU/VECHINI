@@ -74,6 +74,29 @@ def create_collection_from_document(node: tuple, collection_name: str, body: dic
         raise RuntimeError(f"collection create returned {result}")
 
 
+def create_worker_shard_keys(nodes: list[tuple], collection_name: str, run_mode: str) -> None:
+    """Create one named shard on each worker's own Qdrant peer."""
+    for worker_id, (host, port) in enumerate(nodes):
+        peer = None if run_mode == "local" else qdrant_rest(
+            "GET", f"http://{host}:{port}/cluster"
+        )["result"]["peer_id"]
+        payload = {
+            "shard_key": f"worker_{worker_id}",
+            "shards_number": 1,
+            "replication_factor": 1,
+        }
+        if peer is not None:
+            payload["placement"] = [peer]
+        result = qdrant_rest(
+            "PUT",
+            f"http://{nodes[0][0]}:{nodes[0][1]}/collections/{collection_name}/shards",
+            payload,
+        )
+        if result.get("result") is not True:
+            raise RuntimeError(f"worker_{worker_id} shard create returned {result}")
+        print(f"Created worker_{worker_id} on peer {peer}", flush=True)
+
+
 def build_quantization_config():
     quantization_type = os.getenv("QUANTIZATION_TYPE", "NONE").strip().upper()
     always_ram = is_truthy(os.getenv("QUANTIZATION_ALWAYS_RAM"))
@@ -211,6 +234,7 @@ def load_topology(file_path, use_localhost=True):
 nodes = load_topology("ip_registry.txt", use_localhost=False)
 run_mode = os.getenv("RUN_MODE", "PBS").strip().lower()
 rebalance_topology = is_truthy(os.getenv("REBALANCE_TOPOLOGY"))
+custom_sharding = os.getenv("INSERT_BALANCE_STRATEGY", "").strip() == "CUSTOM_SHARDING"
 collection_name = os.environ["COLLECTION_NAME"].strip()
 
 
@@ -232,8 +256,10 @@ if collection_document:
         flush=True,
     )
     collection_body = load_collection_document(collection_document)
+    if custom_sharding and str(collection_body.get("sharding_method", "auto")).lower() != "custom":
+        raise ValueError("CUSTOM_SHARDING requires COLLECTION_DOCUMENT sharding_method=custom")
     doc_shards = collection_body.get("shard_number")
-    if doc_shards is not None and doc_shards != len(nodes):
+    if not custom_sharding and doc_shards is not None and doc_shards != len(nodes):
         print(
             f"[warn] document shard_number={doc_shards} but the cluster has "
             f"{len(nodes)} qdrant nodes",
@@ -293,13 +319,15 @@ while True:
         collection_kwargs = {
             "collection_name": collection_name,
             "vectors_config": models.VectorParams(size=vector_dim, distance=metric),
-            "shard_number": len(nodes),
+            "shard_number": 1 if custom_sharding else len(nodes),
             "hnsw_config": models.HnswConfigDiff(
                 m=hnsw_m, ef_construct=ef_construction
             ),
             "optimizers_config": models.OptimizersConfigDiff(**optimizers_kwargs),
             "replication_factor": 1,
         }
+        if custom_sharding:
+            collection_kwargs["sharding_method"] = models.ShardingMethod.CUSTOM
         if quantization_config is not None:
             collection_kwargs["quantization_config"] = quantization_config
 
@@ -317,6 +345,10 @@ while True:
         exit()
 
 print(f"Created Collection: {collection_name}",flush=True)
+if custom_sharding:
+    create_worker_shard_keys(nodes, collection_name, run_mode)
+    Path("ready.flag").touch()
+    exit()
 if run_mode == "local" or not rebalance_topology:
     time.sleep(2)
     info = client.get_collection(collection_name)
